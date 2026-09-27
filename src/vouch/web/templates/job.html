@@ -51,7 +51,7 @@
 
   <aside aria-labelledby="res-h">
     <h2 id="res-h">Resumes</h2>
-    {% if analysis %}{% include "_run.html" %}{% endif %}
+    {% if analysis %}{% with job_id=job.id %}{% include "_run.html" %}{% endwith %}{% endif %}
     {% if versions %}
     <ul class="versions">
       {% for v, cov in versions %}

@@ -162,3 +162,29 @@ def test_highlight_merges_adjacent_new_words():
     assert str(highlight_changes("Built APIs", "Built scalable backend APIs")) == (
         "Built <mark>scalable backend</mark> APIs"
     )
+
+
+def test_tailor_button_runs_and_redirects_to_new_version(client, db, seeded, monkeypatch):
+    import time
+
+    import vouch.web.app as web
+
+    job_id, version_id = seeded
+    page = client.get(f"/jobs/{job_id}")
+    assert f'hx-post="/jobs/{job_id}/tailor"' in page.text  # regression: was "/jobs//tailor"
+
+    monkeypatch.setattr(web, "get_llm", lambda settings: None)
+    monkeypatch.setattr(
+        web,
+        "create_version",
+        lambda session, job, profile, llm, settings: session.get(ResumeVersion, version_id),
+    )
+    started = client.post(f"/jobs/{job_id}/tailor")
+    assert started.status_code == 200
+
+    for _ in range(50):  # the run happens in a background thread
+        status = client.get(f"/jobs/{job_id}/tailor")
+        if "HX-Redirect" in status.headers:
+            break
+        time.sleep(0.05)
+    assert status.headers["HX-Redirect"] == f"/versions/{version_id}"
