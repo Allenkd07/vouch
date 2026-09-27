@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} · Vouch{% endblock %}
+{% block content %}
+<p class="back"><a href="/jobs">All jobs</a></p>
+<div class="job-head">
+  <div>
+    <h1>{{ job.title or 'Untitled role' }}</h1>
+    <p class="company">{{ job.company or 'Unknown company' }}{% if job.location %}, {{ job.location }}{% endif %}
+      {% if job.url and not job.url.startswith('manual:') %} · <a href="{{ job.url }}" target="_blank" rel="noopener">Open posting</a>{% endif %}</p>
+  </div>
+  {% with job_id=job.id %}{% include "_status.html" %}{% endwith %}
+</div>
+
+<div class="split">
+  <section aria-labelledby="req-h">
+    {% if analysis %}
+    <p class="facts">
+      {{ analysis.seniority|capitalize }} level
+      {% if analysis.years_experience_min %}· {{ analysis.years_experience_min }}{% if analysis.years_experience_max %}–{{ analysis.years_experience_max }}{% else %}+{% endif %} years{% endif %}
+      · {{ analysis.work_mode|capitalize if analysis.work_mode != 'unknown' else 'Work mode not stated' }}
+    </p>
+    <p class="lede">{{ analysis.summary }}</p>
+
+    <h2 id="req-h">What they ask for</h2>
+    {% if coverage %}<p class="hint">Marks show how the latest resume covers each requirement.</p>{% endif %}
+    {% for must, label in [(true, 'Required'), (false, 'Nice to have')] %}
+      {% set reqs = analysis.requirements|selectattr('must_have', 'equalto', must)|sort(attribute='weight', reverse=true)|list %}
+      {% if reqs %}
+      <h3>{{ label }}</h3>
+      <ul class="reqs">
+        {% for r in reqs %}
+        {% set c = coverage.get(r.name) %}
+        <li class="req {{ c.status if c else '' }}">
+          <span class="req-name">{{ r.name }}</span>
+          {% if r.options %}<span class="req-options">{{ r.options|join(' / ') }}</span>{% endif %}
+          {% if c %}<span class="req-mark">{{ {'strong': 'Covered', 'education': 'Covered by education', 'partial': 'Partly covered', 'skills-only': 'Only in skills list', 'gap': 'Not covered'}[c.status] }}</span>{% endif %}
+          <q>{{ r.quote }}</q>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    {% endfor %}
+    <details class="posting">
+      <summary>Full posting</summary>
+      <div class="posting-text">{{ job.description }}</div>
+    </details>
+    {% else %}
+    <p class="empty">This job's requirements haven't been extracted. Add it again from the jobs page.</p>
+    {% endif %}
+  </section>
+
+  <aside aria-labelledby="res-h">
+    <h2 id="res-h">Resumes</h2>
+    {% if analysis %}{% include "_run.html" %}{% endif %}
+    {% if versions %}
+    <ul class="versions">
+      {% for v, cov in versions %}
+      <li>
+        <a href="/versions/{{ v.id }}">Version {{ v.id }}</a>
+        <span class="muted">{{ v.created_at.strftime('%d %b, %H:%M') }}</span>
+        {% if cov %}<span>{{ cov.met }} of {{ cov.total }} requirements met</span>{% endif %}
+        {% if v.approved_at %}<span class="tag ok">Approved</span>{% endif %}
+        {% if app and app.resume_version_id == v.id %}<span class="tag">Attached to application</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No tailored resume yet.</p>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

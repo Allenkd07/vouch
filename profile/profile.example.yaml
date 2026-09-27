@@ -1,0 +1,61 @@
+# Example master profile (fictional person). Copy to profile.yaml, or generate a draft with:
+#   vouch profile bootstrap resumes/*.pdf
+#
+# Put EVERYTHING you've done here, more than fits on one page. Tailoring selects and rephrases
+# from this file; it may never claim a tool, number or scope that isn't in a bullet's facts.
+contact:
+  name: Asha Menon
+  email: asha@example.com
+  location: Bengaluru, India
+  links:
+    - label: GitHub
+      url: https://github.com/example
+experience:
+  - id: finlytics
+    company: Finlytics
+    title: Software Engineer
+    location: Bengaluru
+    start: 2023-07
+    bullets:
+      - id: finlytics-1
+        text: Built a payments reconciliation service in Python and PostgreSQL processing 2M records/day
+        facts:
+          tools: [Python, PostgreSQL]
+          metrics: [2M records/day]
+        tags: [backend, data]
+      - id: finlytics-2
+        text: Cut report generation time by 60% by moving batch jobs to Celery with Redis
+        facts:
+          tools: [Celery, Redis]
+          metrics: [60%]
+        tags: [backend, performance]
+      - id: finlytics-3
+        text: Mentored 2 interns and ran weekly code reviews for the payments team
+        facts:
+          scope: [mentored 2 interns]
+        tags: [leadership]
+projects:
+  - id: docqa
+    name: DocQA
+    url: https://github.com/example/docqa
+    dates: 2024
+    bullets:
+      - id: docqa-1
+        text: RAG assistant over 1,200 policy PDFs using pgvector and Gemini, with a 50-question eval set
+        facts:
+          tools: [pgvector, Gemini]
+          metrics: ["1,200 policy PDFs", 50-question eval set]
+        tags: [ml, llm]
+education:
+  - id: nitc
+    institution: NIT Calicut
+    degree: B.Tech
+    field: Computer Science
+    start: 2019
+    end: 2023
+skills:
+  languages: [Python, SQL, TypeScript]
+  frameworks: [FastAPI, Celery, React, Flask, Next.js]
+  databases: [PostgreSQL, Redis, pgvector, MongoDB]
+  cloud: [GCP]
+  tools: [Docker, Git, Gemini]

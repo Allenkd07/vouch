@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Applications · Vouch{% endblock %}
+{% block content %}
+<h1>Applications</h1>
+{% set any = groups.values()|map('length')|sum %}
+{% if not any %}
+<p class="empty">You're not tracking any jobs yet. Set a status on a job, or approve a resume, and it shows up here.</p>
+{% else %}
+{% for status, rows in groups.items() %}
+  {% if rows %}
+  <section class="stage">
+    <h2>{{ status|capitalize }} <span class="count">{{ rows|length }}</span></h2>
+    <ul class="apps">
+      {% for a, job in rows %}
+      <li>
+        <div class="app-main">
+          <a class="role" href="/jobs/{{ job.id }}">{{ job.title }}</a>
+          <span class="company">{{ job.company }}</span>
+          <span class="muted">
+            {% if a.applied_at %}Applied {{ a.applied_at.strftime('%d %b %Y') }}{% else %}Updated {{ a.updated_at.strftime('%d %b') }}{% endif %}
+            {% if a.resume_version_id %} · <a href="/versions/{{ a.resume_version_id }}">Resume sent (v{{ a.resume_version_id }})</a>{% endif %}
+          </span>
+        </div>
+        {% with job_id=job.id, app=a %}{% include "_status.html" %}{% endwith %}
+        <form class="notes" hx-post="/applications/{{ job.id }}/notes" hx-trigger="change delay:300ms" hx-target="find .note-state">
+          <label class="visually-hidden" for="notes-{{ job.id }}">Notes</label>
+          <textarea id="notes-{{ job.id }}" name="notes" rows="2" placeholder="Recruiter, next step, dates">{{ a.notes }}</textarea>
+          <span class="note-state"></span>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+{% endfor %}
+{% endif %}
+{% endblock %}

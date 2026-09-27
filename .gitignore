@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Personal data: keep out of git unless the repo is private
+resumes/*
+!resumes/.gitkeep
+profile/profile.yaml
+profile/variants/*.yaml
+output/
+
+# Personal planning notes (roadmap, project ideas)
+notes/

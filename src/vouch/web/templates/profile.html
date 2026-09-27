@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Profile · Vouch{% endblock %}
+{% block content %}
+<h1>Profile</h1>
+<p class="lede">Everything a tailored resume is allowed to claim. Edit <code>profile/profile.yaml</code> to change it; this page reloads it each time.</p>
+{% if error %}
+<p class="error" role="alert">Your profile couldn't be loaded: {{ error }}</p>
+{% else %}
+{% if warnings %}
+<details class="warnings">
+  <summary>{{ warnings|length }} thing{{ 's' if warnings|length != 1 }} to improve</summary>
+  <ul>{% for w in warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+</details>
+{% endif %}
+{% for e in profile.experience %}
+<section class="block">
+  <h2>{{ e.company }}<span class="sub">, {{ e.title }}</span></h2>
+  {% if e.description %}<p class="muted">{{ e.description }}</p>{% endif %}
+  <ul class="profile-bullets">
+    {% for b in e.bullets %}
+    <li>
+      <p class="text">{{ b.text }}</p>
+      <p class="source">
+        {% if b.source == 'resume' %}From your resume{% elif b.source and b.source.startswith('repo:') %}From {{ b.source[5:] }}{% elif b.source == 'self-reported' %}Self-reported, no code evidence{% else %}Source not recorded{% endif %}
+        {% if b.facts.metrics %} · {{ b.facts.metrics|join(', ') }}{% endif %}
+      </p>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endfor %}
+{% for p in profile.projects %}
+<section class="block">
+  <h2>{{ p.name }}</h2>
+  <ul class="profile-bullets">
+    {% for b in p.bullets %}<li><p class="text">{{ b.text }}</p></li>{% endfor %}
+  </ul>
+</section>
+{% endfor %}
+{% endif %}
+{% endblock %}

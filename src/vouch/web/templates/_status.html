@@ -1,0 +1,10 @@
+<form class="status" hx-post="/jobs/{{ job_id }}/status" hx-trigger="change" hx-swap="outerHTML">
+  <label class="visually-hidden" for="status-{{ job_id }}">Application status</label>
+  <select id="status-{{ job_id }}" name="status" data-status="{{ app.status if app else '' }}">
+    <option value="" {% if not app %}selected{% endif %}>Not tracking</option>
+    {% for s in STATUSES %}
+    <option value="{{ s }}" {% if app and app.status == s %}selected{% endif %}>{{ s|capitalize }}</option>
+    {% endfor %}
+  </select>
+  {% if saved %}<span class="saved" role="status">Saved</span>{% endif %}
+</form>

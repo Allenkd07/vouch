@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Resume v{{ version.id }} · {{ job.company }} · Vouch{% endblock %}
+{% block main_class %}page wide{% endblock %}
+{% block content %}
+<p class="back"><a href="/jobs/{{ job.id }}">{{ job.title }}, {{ job.company }}</a></p>
+<div class="version-head">
+  <div>
+    <h1>Resume, version {{ version.id }}</h1>
+    <p class="facts">
+      {{ report.pages }} page{{ 's' if report.pages != 1 }}
+      · {{ report.keywords_after|length }} of {{ analysis.keywords|length }} posting keywords
+      (your original resume had {{ report.keywords_before|length }})
+      · {% if version.approved_at %}<span class="tag ok">Approved {{ version.approved_at.strftime('%d %b') }}</span>{% else %}Not approved yet{% endif %}
+    </p>
+  </div>
+  <div class="actions">
+    <a class="button" href="/versions/{{ version.id }}/docx">Download DOCX</a>
+    <a class="button" href="/versions/{{ version.id }}/pdf" target="_blank" rel="noopener">Open PDF</a>
+    {% if not version.approved_at %}
+    <form method="post" action="/versions/{{ version.id }}/approve">
+      <button class="primary" type="submit">Approve for sending</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+{% if report.pages > 1 %}<p class="error" role="alert">This resume runs to {{ report.pages }} pages. Leave out a bullet or two to get it back to one.</p>{% endif %}
+
+<div class="review">
+  <form class="sheet" method="post" action="/versions/{{ version.id }}">
+    <p class="legend">
+      <mark>Highlighted words</mark> were changed for this job.
+      <span class="mark ok">Checked</span> means the rewrite was verified against your profile.
+      <span class="mark flag">Kept original</span> means the rewrite claimed something your profile doesn't support.
+    </p>
+
+    {% set s_choice = 'tailored' if doc.summary == doc.summary_proposed else ('original' if doc.summary == doc.summary_original else 'custom') %}
+    <section class="block">
+      <h2>Summary</h2>
+      <div class="item">
+        <p class="text">{{ doc.summary or '' }}</p>
+        {% if 'summary' in report.fallbacks %}<p class="mark flag">Kept original: {{ report.fallbacks['summary']|join('; ') }}</p>{% endif %}
+        {% with id='summary', choice=s_choice, custom=doc.summary if s_choice == 'custom' else '' %}{% include "_choice.html" %}{% endwith %}
+      </div>
+    </section>
+
+    {% for entry in doc.experience + doc.projects %}
+    {% if entry.bullets %}
+    <section class="block">
+      <h2>{{ entry.heading }}{% if entry.subheading %}<span class="sub">, {{ entry.subheading }}</span>{% endif %}</h2>
+      {% for b in entry.bullets %}
+      <div class="item {% if not b.included %}excluded{% endif %}">
+        <label class="include">
+          <input type="checkbox" name="include:{{ b.id }}" {% if b.included %}checked{% endif %}>
+          <span class="visually-hidden">Include this bullet</span>
+        </label>
+        <div>
+          <p class="text">{{ b|changes }}</p>
+          {% if b.changed %}<p class="was">Your profile: {{ b.original }}</p>{% endif %}
+          {% if b.flags %}
+            <p class="mark flag">Kept original: {{ b.flags|join('; ') }}</p>
+          {% elif b.choice == 'custom' %}
+            <p class="mark edit">Your wording</p>
+          {% elif b.proposed and b.proposed != b.original %}
+            <p class="mark ok">Checked</p>
+          {% endif %}
+          {% with id=b.id, choice=b.choice, custom=b.text if b.choice == 'custom' else '' %}{% include "_choice.html" %}{% endwith %}
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+    {% endfor %}
+
+    <div class="save-bar">
+      <button class="primary" type="submit">Save changes and rebuild PDF</button>
+      <span class="hint">Saving clears the approval so you can check the new PDF.</span>
+    </div>
+  </form>
+
+  <aside class="side">
+    <h2>Preview</h2>
+    <iframe class="preview" src="/versions/{{ version.id }}/pdf#toolbar=0&amp;view=FitH" title="PDF preview of this resume"></iframe>
+
+    <h2>Requirements</h2>
+    <ul class="reqs compact">
+      {% for c in report.coverage %}
+      <li class="req {{ c.status }}">
+        <span class="req-name">{{ c.requirement }}</span>
+        <span class="req-mark">{{ {'strong': 'Covered', 'education': 'Covered by education', 'partial': 'Partly covered', 'skills-only': 'Only in skills list', 'gap': 'Not covered'}[c.status] }}{% if not c.must_have %}, nice to have{% endif %}</span>
+        {% if c.status in ('partial', 'gap', 'skills-only') and c.note %}<span class="req-note">{{ c.note }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% if report.keywords_missing %}
+    <h2>Posting keywords not on the page</h2>
+    <p class="keywords">{{ report.keywords_missing|join(', ') }}</p>
+    <p class="hint">Add these only if they're true. If they are, record them in your profile so the next resume can use them.</p>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

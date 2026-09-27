@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Jobs · Vouch{% endblock %}
+{% block content %}
+<h1>Jobs</h1>
+
+<form class="add-job" method="post" action="/jobs" onsubmit="const b=this.querySelector('button'); b.disabled=true; b.textContent='Reading the posting…'">
+  <label for="url">Job link</label>
+  <div class="add-row">
+    <input id="url" name="url" type="url" value="{{ form.url or '' }}"
+           placeholder="Workday, Greenhouse, Lever, Ashby or any careers page">
+    <button type="submit" class="primary">Add job</button>
+  </div>
+  <details {% if form.text %}open{% endif %}>
+    <summary>Paste the description instead</summary>
+    <textarea name="text" rows="8" aria-label="Job description">{{ form.text or '' }}</textarea>
+    <div class="pair">
+      <label>Company <input name="company" value="{{ form.company or '' }}"></label>
+      <label>Title <input name="title" value="{{ form.title or '' }}"></label>
+    </div>
+  </details>
+  <p class="hint">Adding a job reads the posting and pulls out its requirements. It takes about 20 seconds.</p>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+</form>
+
+{% if rows %}
+<table class="jobs">
+  <thead>
+    <tr><th scope="col">Role</th><th scope="col">Added</th><th scope="col">Requirements met</th><th scope="col">Status</th></tr>
+  </thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td>
+        <a class="role" href="/jobs/{{ row.job.id }}">{{ row.job.title or 'Untitled role' }}</a>
+        <span class="company">{{ row.job.company or 'Unknown company' }}{% if row.job.location %}, {{ row.job.location }}{% endif %}</span>
+      </td>
+      <td>{{ row.job.fetched_at.strftime('%d %b') }}</td>
+      <td>
+        {% if row.coverage %}
+          <span class="meter" style="--met: {{ row.coverage.met }}; --partial: {{ row.coverage.partial }}; --total: {{ row.coverage.total }}" aria-hidden="true"></span>
+          {{ row.coverage.met }} of {{ row.coverage.total }}{% if row.coverage.partial %}, {{ row.coverage.partial }} partly{% endif %}
+        {% else %}<span class="muted">No resume yet</span>{% endif %}
+      </td>
+      <td>{% with job_id=row.job.id, app=row.app %}{% include "_status.html" %}{% endwith %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No jobs yet. Paste a job link above to add your first one.</p>
+{% endif %}
+{% endblock %}

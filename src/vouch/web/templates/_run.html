@@ -1,0 +1,9 @@
+<div id="run" class="run"
+     {% if run and run.state == 'running' %}hx-get="/jobs/{{ job_id }}/tailor" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  {% if run and run.state == 'running' %}
+    <p class="working" role="status"><span class="spinner" aria-hidden="true"></span>Tailoring your resume. This takes about a minute: matching evidence, rewriting, then checking every change.</p>
+  {% else %}
+    <button class="primary" hx-post="/jobs/{{ job_id }}/tailor" hx-target="#run" hx-swap="outerHTML">Tailor a resume for this job</button>
+    {% if run and run.state == 'error' %}<p class="error" role="alert">Tailoring stopped: {{ run.message }}</p>{% endif %}
+  {% endif %}
+</div>

@@ -1,0 +1,7 @@
+<fieldset class="choice">
+  <legend class="visually-hidden">Wording</legend>
+  {% for value, label in [('tailored', 'Tailored'), ('original', 'Original'), ('custom', 'My wording')] %}
+  <label><input type="radio" name="choice:{{ id }}" value="{{ value }}" {% if choice == value %}checked{% endif %}> {{ label }}</label>
+  {% endfor %}
+  <textarea name="custom:{{ id }}" rows="2" aria-label="Your wording">{{ custom }}</textarea>
+</fieldset>
