@@ -32,7 +32,9 @@ filters:
   # A title must contain one of these (case-insensitive, whole words)...
   title_include: [engineer, developer, sde, backend, full stack, fullstack, software, ai, ml, platform]
   # ...and none of these.
-  title_exclude: [senior, sr, senior staff, staff, principal, distinguished, director, manager,
+  # ("Senior" is kept: those roles often ask for 3-5 years. Experience is handled by
+  # ranking.accept_years_up_to instead.)
+  title_exclude: [senior staff, staff, principal, distinguished, director, manager,
                   head, intern, internship, vp, architect, lead, sales, account, recruiter, designer,
                   counsel, marketing, support, customer experience, consultant, qa, test, android,
                   ios, mobile, hardware, embedded, firmware, solutions engineer, solution engineer,
@@ -48,3 +50,6 @@ filters:
 ranking:
   # Jobs sent to the LLM for requirement extraction per run (each uses 1 Gemini request).
   analyze_per_run: 5
+  # Roles asking for up to this many years of experience aren't penalised; beyond it, the
+  # fit score drops 12 points per extra year (at most 40).
+  accept_years_up_to: 5

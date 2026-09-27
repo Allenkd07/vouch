@@ -109,15 +109,19 @@ def test_fit_matches_profile_skills_and_bullet_tools():
     assert fit.score == pytest.approx(58.9, abs=0.1)
 
 
-def test_fit_penalises_seniority_gap():
+def test_fit_penalises_experience_beyond_the_accepted_range():
     profile = load_profile(EXAMPLE)  # first role starts 2023-07 -> ~3.2 years at NOW
     assert years_of_experience(profile, NOW) == pytest.approx(3.24, abs=0.02)
     python = _req("Python", ["Python"])
-    ok = score_fit(profile, _analysis([python], years=3), 0.85, NOW)
-    too_senior = score_fit(profile, _analysis([python], years=6), 0.85, NOW)
-    staff = score_fit(profile, _analysis([python], seniority="staff"), 0.85, NOW)
-    assert ok.score == 100.0 and not ok.notes
-    assert too_senior.score == pytest.approx(100 - 12 * (6 - 3.24), abs=0.2)
+
+    def fit(**kw):
+        return score_fit(profile, _analysis([python], **kw), 0.85, NOW, accept_years_up_to=5)
+
+    assert fit(years=5).score == 100.0 and not fit(years=5).notes  # 2-5 years: no penalty
+    assert fit(years=7).score == 100 - 24  # 2 years beyond the accepted range
+    assert fit(years=12).score == 60.0  # penalty capped at 40
+    assert fit(years=7).notes == ["asks for 7+ years; you have about 3.2"]
+    staff = fit(seniority="staff")
     assert staff.score == 70.0 and staff.notes == ["staff-level role"]
 
 

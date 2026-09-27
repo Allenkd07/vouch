@@ -71,6 +71,7 @@ def score_fit(
     analysis: JobAnalysis,
     similarity: float | None = None,
     now: datetime | None = None,
+    accept_years_up_to: float = 5,
 ) -> Fit:
     vocab = profile_vocabulary(profile)
     technical = [r for r in analysis.requirements if r.category in TECHNICAL and r.options]
@@ -97,10 +98,10 @@ def score_fit(
 
     notes, penalty = [], 0.0
     years = years_of_experience(profile, now)
-    if analysis.years_experience_min and analysis.years_experience_min > years + 1:
-        gap = analysis.years_experience_min - years
-        penalty += min(40.0, 12.0 * gap)
-        notes.append(f"asks for {analysis.years_experience_min}+ years; you have about {years:.1f}")
+    wanted = analysis.years_experience_min
+    if wanted and wanted > accept_years_up_to:
+        penalty += min(40.0, 12.0 * (wanted - accept_years_up_to))
+        notes.append(f"asks for {wanted}+ years; you have about {years:.1f}")
     if analysis.seniority in SENIOR_LEVELS:
         penalty += 30.0
         notes.append(f"{analysis.seniority}-level role")

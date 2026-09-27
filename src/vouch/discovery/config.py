@@ -34,6 +34,7 @@ class Filters(BaseModel):
 
 class Ranking(BaseModel):
     analyze_per_run: int = Field(default=5, ge=0)
+    accept_years_up_to: float = Field(default=5, ge=0)
 
 
 class SearchConfig(BaseModel):

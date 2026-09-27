@@ -177,7 +177,10 @@ def create_app(
             return job_detail(job_id, request, session, error=str(e))
         save_analysis(job, result, settings.llm_model)
         try:
-            rescore_job(session, job, load_profile(profile_path))
+            years = (
+                load_search(search_path).ranking.accept_years_up_to if search_path.exists() else 5
+            )
+            rescore_job(session, job, load_profile(profile_path), accept_years_up_to=years)
         except (OSError, ValidationError):
             pass  # the score appears after the next discovery run instead
         session.commit()

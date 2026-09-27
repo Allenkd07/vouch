@@ -153,7 +153,13 @@ def discover(
         fit = None
         if job.analysis:
             analysis = VerifiedAnalysis.model_validate(job.analysis).analysis
-            fit = score_fit(profile, analysis, similarity.get(job.id), now)
+            fit = score_fit(
+                profile,
+                analysis,
+                similarity.get(job.id),
+                now,
+                accept_years_up_to=config.ranking.accept_years_up_to,
+            )
         _upsert_match(session, job.id, fit, similarity.get(job.id))
         result.scored += 1
     session.commit()
@@ -241,7 +247,13 @@ def skill_gaps(rows, top: int = 30) -> list[tuple[str, int]]:
     return counts.most_common(10)
 
 
-def rescore_job(session: Session, job: Job, profile: Profile, now: datetime | None = None) -> None:
+def rescore_job(
+    session: Session,
+    job: Job,
+    profile: Profile,
+    now: datetime | None = None,
+    accept_years_up_to: float = 5,
+) -> None:
     """Recompute one job's fit (e.g. right after its requirements were extracted), keeping the
     similarity from the last discovery run."""
     if not job.analysis:
@@ -249,4 +261,5 @@ def rescore_job(session: Session, job: Job, profile: Profile, now: datetime | No
     match = session.get(Match, job.id)
     similarity = match.similarity if match else None
     analysis = VerifiedAnalysis.model_validate(job.analysis).analysis
-    _upsert_match(session, job.id, score_fit(profile, analysis, similarity, now), similarity)
+    fit = score_fit(profile, analysis, similarity, now, accept_years_up_to=accept_years_up_to)
+    _upsert_match(session, job.id, fit, similarity)
