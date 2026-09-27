@@ -1,7 +1,8 @@
 from datetime import datetime
 from functools import lru_cache
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, create_engine, func
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, create_engine, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -61,6 +62,33 @@ class Job(Base):
     analysis_model: Mapped[str | None] = mapped_column(String)
     analysis_hash: Mapped[str | None] = mapped_column(String(64))
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set by discovery each time the posting is still listed; None for manually added jobs.
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class JobEmbedding(Base):
+    """Embedding of a job's title + description, for cheap similarity ranking."""
+
+    __tablename__ = "job_embeddings"
+
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), primary_key=True)
+    model: Mapped[str] = mapped_column(String)
+    content_hash: Mapped[str] = mapped_column(String(64))  # re-embed when the posting changes
+    embedding: Mapped[list[float]] = mapped_column(Vector())
+
+
+class Match(Base):
+    """Latest fit estimate for a job (discovery.fit.Fit), recomputed on each discovery run."""
+
+    __tablename__ = "matches"
+
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), primary_key=True)
+    score: Mapped[float | None] = mapped_column(Float)  # None until requirements are extracted
+    similarity: Mapped[float | None] = mapped_column(Float)
+    fit: Mapped[dict | None] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class ResumeVersion(Base):

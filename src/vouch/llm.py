@@ -18,7 +18,7 @@ class LLMError(RuntimeError):
 class LLM(Protocol):
     def generate_json(self, prompt: str, schema: type[T], *, system: str | None = None) -> T: ...
 
-    def embed(self, texts: list[str]) -> list[list[float]]: ...
+    def embed(self, texts: list[str], dimensions: int | None = None) -> list[list[float]]: ...
 
 
 def _describe(error, model: str) -> str:
@@ -32,6 +32,11 @@ def _describe(error, model: str) -> str:
     if code == 503:
         return f"{model} is overloaded right now (503). Try again in a few minutes."
     return f"Gemini API error {code}: {getattr(error, 'message', error)}"
+
+
+def _unit(vector: list[float]) -> list[float]:
+    norm = sum(x * x for x in vector) ** 0.5
+    return [x / norm for x in vector] if norm else vector
 
 
 def _schema_prompt(prompt: str, schema: type[BaseModel]) -> str:
@@ -93,9 +98,29 @@ class GeminiLLM:
                 )
         raise LLMError(f"Model output did not match {schema.__name__}: {last_error}")
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        result = self._client.models.embed_content(model=self._embedding_model, contents=texts)
-        return [list(e.values) for e in result.embeddings]
+    def embed(self, texts: list[str], dimensions: int | None = None) -> list[list[float]]:
+        """Unit-length vectors, 100 texts per request. `dimensions` truncates (the model is
+        trained so shorter prefixes still work) and the result is re-normalised."""
+        config = self._genai.types.EmbedContentConfig(output_dimensionality=dimensions)
+
+        def call(contents) -> list[list[float]]:
+            try:
+                result = self._client.models.embed_content(
+                    model=self._embedding_model, contents=contents, config=config
+                )
+            except self._genai.errors.APIError as e:
+                raise LLMError(_describe(e, self._embedding_model)) from e
+            return [_unit(list(e.values)) for e in result.embeddings]
+
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), 100):
+            batch = texts[start : start + 100]
+            got = call(batch)
+            if len(got) != len(batch):
+                # Some (multimodal) models embed a list as one combined input; go one by one.
+                got = [call(text)[0] for text in batch]
+            vectors += got
+        return vectors
 
 
 class FakeLLM:
@@ -111,14 +136,15 @@ class FakeLLM:
             raise LLMError("FakeLLM has no responder configured")
         return schema.model_validate(self._responder(prompt, schema))
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], dimensions: int | None = None) -> list[list[float]]:
         # Stable pseudo-embedding: character histogram, enough for plumbing tests.
         out = []
         for t in texts:
-            v = [0.0] * 16
+            size = dimensions or 16
+            v = [0.0] * size
             for ch in t.lower():
-                v[ord(ch) % 16] += 1.0
-            out.append(v)
+                v[ord(ch) % size] += 1.0
+            out.append(_unit(v))
         return out
 
 

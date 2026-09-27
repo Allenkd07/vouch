@@ -2,6 +2,7 @@
 
 Single user, runs on localhost (`vouch web`). Server-rendered Jinja2 + htmx; no build step."""
 
+import logging
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -16,8 +17,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from vouch.config import get_settings
-from vouch.db import Application, Job, ResumeVersion, get_sessionmaker
+from vouch.db import Application, Job, Match, ResumeVersion, get_sessionmaker
+from vouch.discovery.config import DEFAULT_SEARCH, load_search
+from vouch.discovery.run import discover, ranked_matches, rescore_job, skill_gaps
+from vouch.jobs.requirements import analyze_job
 from vouch.jobs.sources import FetchError
+from vouch.jobs.store import save_analysis
 from vouch.llm import LLMError, get_llm
 from vouch.profile.schema import lint, load_profile
 from vouch.services import (
@@ -35,6 +40,7 @@ from vouch.tailoring.pipeline import TailorReport
 from vouch.web.diff import highlight_changes
 
 HERE = Path(__file__).parent
+log = logging.getLogger(__name__)
 DEFAULT_PROFILE = Path("profile/profile.yaml")
 
 
@@ -46,7 +52,9 @@ class TailorRun:
 
 
 def create_app(
-    make_session: sessionmaker | None = None, profile_path: Path = DEFAULT_PROFILE
+    make_session: sessionmaker | None = None,
+    profile_path: Path = DEFAULT_PROFILE,
+    search_path: Path = DEFAULT_SEARCH,
 ) -> FastAPI:
     app = FastAPI(title="Vouch")
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
@@ -54,6 +62,7 @@ def create_app(
     templates.env.filters["changes"] = lambda b: highlight_changes(b.original, b.text)
     templates.env.globals["STATUSES"] = STATUSES
     runs: dict[int, TailorRun] = {}
+    discovery: dict[str, TailorRun] = {}  # single entry under "run"
 
     def get_session() -> Iterator[Session]:
         with (make_session or get_sessionmaker())() as session:
@@ -134,7 +143,9 @@ def create_app(
         return RedirectResponse(f"/jobs/{job.id}", status_code=303)
 
     @app.get("/jobs/{job_id}")
-    def job_detail(job_id: int, request: Request, session: Session = Depends(get_session)):
+    def job_detail(
+        job_id: int, request: Request, session: Session = Depends(get_session), error: str = ""
+    ):
         job = session.get(Job, job_id) or _not_found()
         versions = session.scalars(
             select(ResumeVersion)
@@ -152,7 +163,25 @@ def create_app(
             versions=[(v, coverage_counts(v)) for v in versions],
             coverage={c.requirement: c for c in coverage},
             run=runs.get(job_id),
+            match=session.get(Match, job_id),
+            error=error,
         )
+
+    @app.post("/jobs/{job_id}/analyze")
+    def job_analyze(job_id: int, request: Request, session: Session = Depends(get_session)):
+        job = session.get(Job, job_id) or _not_found()
+        settings = get_settings()
+        try:
+            result = analyze_job(job.description, get_llm(settings), title=job.title)
+        except LLMError as e:
+            return job_detail(job_id, request, session, error=str(e))
+        save_analysis(job, result, settings.llm_model)
+        try:
+            rescore_job(session, job, load_profile(profile_path))
+        except (OSError, ValidationError):
+            pass  # the score appears after the next discovery run instead
+        session.commit()
+        return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
     @app.post("/jobs/{job_id}/status")
     def job_status(
@@ -179,6 +208,9 @@ def create_app(
                 runs[job_id] = TailorRun("done", version_id=version.id)
         except (LLMError, ValidationError, ValueError, OSError) as e:
             runs[job_id] = TailorRun("error", message=str(e))
+        except Exception as e:  # noqa: BLE001 - a background run must never die silently
+            log.exception("tailoring job %s failed", job_id)
+            runs[job_id] = TailorRun("error", message=f"Unexpected error ({type(e).__name__}): {e}")
 
     @app.post("/jobs/{job_id}/tailor")
     def tailor_start(job_id: int, request: Request, session: Session = Depends(get_session)):
@@ -254,6 +286,58 @@ def create_app(
         )
 
     # --- applications & profile -------------------------------------------------------------
+
+    # --- discovery ----------------------------------------------------------------------------
+
+    @app.get("/matches")
+    def matches(request: Request, session: Session = Depends(get_session)):
+        rows = ranked_matches(session, limit=100)
+        return page(
+            request,
+            "matches.html",
+            rows=rows,
+            gaps=skill_gaps(rows),
+            run=discovery.get("run"),
+            has_search=search_path.exists(),
+        )
+
+    def run_discovery() -> None:
+        settings = get_settings()
+        try:
+            config = load_search(search_path)
+            profile = load_profile(profile_path)
+            with (make_session or get_sessionmaker())() as session:
+                result = discover(session, config, profile, get_llm(settings), settings)
+            kept = sum(len(c.kept) for c in result.companies)
+            failed = [c.name for c in result.companies if c.error]
+            message = (
+                f"Checked {len(result.companies)} companies: {kept} jobs fit your filters, "
+                f"{result.new_or_changed} new or changed, {len(result.analyzed)} analysed."
+            )
+            if failed:
+                message += f" Couldn't reach: {', '.join(failed)}."
+            discovery["run"] = TailorRun("done", message=" ".join([message, *result.notes]))
+        except (LLMError, ValidationError, ValueError, OSError) as e:
+            discovery["run"] = TailorRun("error", message=str(e))
+        except Exception as e:  # noqa: BLE001 - a background run must never die silently
+            log.exception("job search failed")
+            discovery["run"] = TailorRun(
+                "error", message=f"Unexpected error ({type(e).__name__}): {e}"
+            )
+
+    @app.post("/discover")
+    def discover_start(request: Request):
+        if discovery.get("run", TailorRun("idle")).state != "running":
+            discovery["run"] = TailorRun("running")
+            threading.Thread(target=run_discovery, daemon=True).start()
+        return page(request, "_discover.html", run=discovery["run"])
+
+    @app.get("/discover")
+    def discover_status(request: Request):
+        run = discovery.get("run")
+        if run and run.state == "done":
+            return Response(headers={"HX-Redirect": "/matches"})
+        return page(request, "_discover.html", run=run)
 
     @app.get("/applications")
     def applications(request: Request, session: Session = Depends(get_session)):

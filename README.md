@@ -2,10 +2,11 @@
 
 A job search tool that tailors your resume to each job using only claims your profile can vouch
 for. Every rewritten line is checked against the facts it came from; anything unsupported falls
-back to your original wording. It also tracks your applications. Job ranking and voice mock
-interviews are on the roadmap.
+back to your original wording. It also finds and ranks open jobs at companies you choose, and
+tracks your applications. Voice mock interviews are on the roadmap.
 
-**Status:** Stages 0–3 done (setup, master profile, job intake, truthful resume tailoring, web UI).
+**Status:** Stages 0–4 done (setup, master profile, job intake, truthful resume tailoring, web UI,
+job discovery and ranking).
 
 ## Setup
 
@@ -73,12 +74,41 @@ keyword coverage before and after, and every change with its original. Each run 
 Each tailoring run makes ~3–5 Gemini calls. The free tier allows ~20 requests/day per model; on
 a quota (429) or overload (503) error, retry later or set `LLM_MODEL` to another model.
 
+## Job discovery
+
+```bash
+cp profile/search.example.yaml profile/search.yaml   # companies + filters (git-ignored)
+uv run vouch discover --check      # fetch and filter only: no database, no Gemini
+uv run vouch discover              # fetch, store, rank, extract requirements for the top few
+uv run vouch matches               # ranked list + skills your best matches ask for
+```
+
+A funnel from free to expensive, so the Gemini free tier is enough:
+
+1. **Fetch** every open job from the companies' public boards (Greenhouse, Lever, Ashby,
+   Workday). Free.
+2. **Filter** by title and location rules from `search.yaml`. Free.
+3. **Rank by similarity**: embed new or changed postings and the profile (pgvector cosine
+   similarity). Unchanged postings are never re-embedded.
+4. **Extract requirements** for the `analyze_per_run` most similar unanalysed jobs (1 Gemini
+   request each); the rest wait for later runs, or use **Read requirements** on the job page.
+5. **Score fit** without an LLM: technical requirements that name concrete technologies are
+   matched against the profile's skills and bullet facts, with a penalty for seniority gaps.
+   The page says how many requirements the score is based on; the rest are checked properly
+   when you tailor a resume.
+
+Postings not seen on their board for 3 days drop out of the ranking.
+
+To run it daily on Windows, schedule `uv run vouch discover` with Task Scheduler.
+
 ## Web UI
 
 ```bash
 uv run vouch web                      # http://localhost:8000
 ```
 
+- **Matches:** discovered jobs ranked by fit, what you match and what's missing, the skills your
+  best matches ask for most, and a "Find new jobs" button.
 - **Jobs:** add a job by link or pasted text; see requirements met per job; set a status.
 - **Job page:** requirements with how the latest resume covers each; tailor a new resume
   (runs in the background, about a minute).

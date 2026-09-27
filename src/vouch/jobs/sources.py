@@ -141,13 +141,21 @@ def parse_lever(data: dict, company: str) -> FetchedJob:
         url=data.get("hostedUrl") or "",
         company=company,
         title=data.get("text"),
-        location=(data.get("categories") or {}).get("location"),
+        location=_lever_location(data),
         description="\n\n".join(p.strip() for p in parts if p and p.strip()),
         external_id=data.get("id"),
         posted_at=datetime.fromtimestamp(created / 1000, UTC).date().isoformat()
         if created
         else None,
     )
+
+
+def _lever_location(data: dict) -> str | None:
+    cats = data.get("categories") or {}
+    locations = cats.get("allLocations") or [cats.get("location")]
+    if data.get("workplaceType") == "remote":
+        locations = [*locations, "Remote"]
+    return ", ".join(loc for loc in locations if loc) or None
 
 
 # --- Ashby -----------------------------------------------------------------------------------
@@ -162,18 +170,27 @@ def _ashby(url: str, client: httpx.Client) -> FetchedJob:
     resp.raise_for_status()
     for job in resp.json().get("jobs", []):
         if job.get("id") == job_id:
-            return FetchedJob(
-                source="ashby",
-                url=job.get("jobUrl") or url,
-                company=org,
-                title=job.get("title"),
-                location=job.get("location"),
-                description=job.get("descriptionPlain")
-                or html_to_text(job.get("descriptionHtml", "")),
-                external_id=job_id,
-                posted_at=job.get("publishedAt"),
-            )
+            return parse_ashby(job, org)
     raise FetchError(f"job {job_id} not found on Ashby board {org!r} (closed?)")
+
+
+def parse_ashby(job: dict, org: str) -> FetchedJob:
+    locations = [
+        job.get("location"),
+        *(s.get("location") for s in job.get("secondaryLocations") or []),
+    ]
+    if job.get("isRemote"):
+        locations.append("Remote")
+    return FetchedJob(
+        source="ashby",
+        url=job.get("jobUrl") or "",
+        company=org,
+        title=job.get("title"),
+        location=", ".join(loc for loc in locations if loc) or None,
+        description=job.get("descriptionPlain") or html_to_text(job.get("descriptionHtml", "")),
+        external_id=job.get("id"),
+        posted_at=job.get("publishedAt"),
+    )
 
 
 # --- Any other page --------------------------------------------------------------------------

@@ -11,6 +11,7 @@
   {% with job_id=job.id %}{% include "_status.html" %}{% endwith %}
 </div>
 
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
 <div class="split">
   <section aria-labelledby="req-h">
     {% if analysis %}
@@ -20,6 +21,21 @@
       · {{ analysis.work_mode|capitalize if analysis.work_mode != 'unknown' else 'Work mode not stated' }}
     </p>
     <p class="lede">{{ analysis.summary }}</p>
+
+    {% if match and match.fit %}
+    <div class="fit-box">
+      <span class="fit-score" style="--score: {{ match.score }}">{{ match.score|round|int }}</span>
+      <div>
+        <p class="fit-title">Estimated fit</p>
+        {% if match.fit.total %}<p class="muted">Based on {{ match.fit.checked }} of {{ match.fit.total }} requirements: the ones that name specific technologies.</p>{% endif %}
+        {% if match.fit.matched %}<p class="have">You show: {{ match.fit.matched|join(', ') }}</p>{% endif %}
+        {% if match.fit.missing_must %}<p class="lack">Required, not in your profile: {{ match.fit.missing_must|join(', ') }}</p>{% endif %}
+        {% if match.fit.missing_nice %}<p class="muted">Nice to have, not in your profile: {{ match.fit.missing_nice|join(', ') }}</p>{% endif %}
+        {% for note in match.fit.notes %}<p class="lack">{{ note|capitalize }}</p>{% endfor %}
+        {% if match.fit.unchecked %}<p class="muted">Not checked by this estimate: {{ match.fit.unchecked|join(', ') }}. Tailoring a resume checks them against your bullets.</p>{% endif %}
+      </div>
+    </div>
+    {% endif %}
 
     <h2 id="req-h">What they ask for</h2>
     {% if coverage %}<p class="hint">Marks show how the latest resume covers each requirement.</p>{% endif %}
@@ -45,7 +61,16 @@
       <div class="posting-text">{{ job.description }}</div>
     </details>
     {% else %}
-    <p class="empty">This job's requirements haven't been extracted. Add it again from the jobs page.</p>
+    <p>This job's requirements haven't been read yet.</p>
+    <form method="post" action="/jobs/{{ job.id }}/analyze"
+          onsubmit="const b=this.querySelector('button'); b.disabled=true; b.textContent='Reading the posting…'">
+      <button class="primary" type="submit">Read requirements</button>
+      <span class="hint">Uses 1 Gemini request, about 20 seconds.</span>
+    </form>
+    <details class="posting">
+      <summary>Full posting</summary>
+      <div class="posting-text">{{ job.description }}</div>
+    </details>
     {% endif %}
   </section>
 

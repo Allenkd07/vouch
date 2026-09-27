@@ -1,0 +1,10 @@
+<div id="discover" class="run"
+     {% if run and run.state == 'running' %}hx-get="/discover" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  {% if run and run.state == 'running' %}
+    <p class="working" role="status"><span class="spinner" aria-hidden="true"></span>Checking every company's job board, then ranking what fits. This takes a minute or two.</p>
+  {% else %}
+    <button class="primary" hx-post="/discover" hx-target="#discover" hx-swap="outerHTML">Find new jobs</button>
+    {% if run and run.state == 'done' %}<p class="notice" role="status">{{ run.message }}</p>{% endif %}
+    {% if run and run.state == 'error' %}<p class="error" role="alert">Search stopped: {{ run.message }}</p>{% endif %}
+  {% endif %}
+</div>

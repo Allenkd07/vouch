@@ -15,6 +15,7 @@
     <a class="brand" href="/jobs">Vouch</a>
     <nav aria-label="Main">
       {% set here = request.url.path %}
+      <a href="/matches" {% if here.startswith('/matches') %}aria-current="page"{% endif %}>Matches</a>
       <a href="/jobs" {% if here.startswith('/jobs') or here.startswith('/versions') %}aria-current="page"{% endif %}>Jobs</a>
       <a href="/applications" {% if here.startswith('/applications') %}aria-current="page"{% endif %}>Applications</a>
       <a href="/profile" {% if here.startswith('/profile') %}aria-current="page"{% endif %}>Profile</a>

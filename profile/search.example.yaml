@@ -1,0 +1,50 @@
+# Job discovery settings. Copy to profile/search.yaml (git-ignored) and edit.
+# Boards were checked on 2026-09-27; `vouch discover --check` re-checks them.
+companies:
+  # ats: greenhouse | lever | ashby -> board is the slug in the board URL
+  - {name: Databricks, ats: greenhouse, board: databricks}
+  - {name: MongoDB, ats: greenhouse, board: mongodb}
+  - {name: Stripe, ats: greenhouse, board: stripe}
+  - {name: InMobi, ats: greenhouse, board: inmobi}
+  - {name: GitLab, ats: greenhouse, board: gitlab}
+  - {name: Glance, ats: greenhouse, board: glance}
+  - {name: HackerRank, ats: greenhouse, board: hackerrank}
+  - {name: Elastic, ats: greenhouse, board: elastic}
+  - {name: Druva, ats: greenhouse, board: druva}
+  - {name: Coinbase, ats: greenhouse, board: coinbase}
+  - {name: Airbnb, ats: greenhouse, board: airbnb}
+  - {name: Groww, ats: greenhouse, board: groww}
+  - {name: Observe.AI, ats: greenhouse, board: observeai}
+  - {name: Anthropic, ats: greenhouse, board: anthropic}
+  - {name: Meesho, ats: lever, board: meesho}
+  - {name: Zeta, ats: lever, board: zeta}
+  - {name: FamPay, ats: lever, board: fampay}
+  - {name: CRED, ats: lever, board: cred}
+  - {name: Sarvam AI, ats: ashby, board: sarvam}
+  - {name: Snowflake, ats: ashby, board: snowflake}
+  - {name: OpenAI, ats: ashby, board: openai}
+  - {name: Atlan, ats: ashby, board: atlan}
+  - {name: Notion, ats: ashby, board: notion}
+  # ats: workday -> url is the careers site; search narrows the (often long) list
+  - {name: JioStar, ats: workday, url: "https://jiostar.wd102.myworkdayjobs.com/jiostar", search: engineer}
+
+filters:
+  # A title must contain one of these (case-insensitive, whole words)...
+  title_include: [engineer, developer, sde, backend, full stack, fullstack, software, ai, ml, platform]
+  # ...and none of these.
+  title_exclude: [senior, sr, senior staff, staff, principal, distinguished, director, manager,
+                  head, intern, internship, vp, architect, lead, sales, account, recruiter, designer,
+                  counsel, marketing, support, customer experience, consultant, qa, test, android,
+                  ios, mobile, hardware, embedded, firmware, solutions engineer, solution engineer,
+                  implementation, security, cybersecurity, network, electrical, mechanical,
+                  data center]
+  # The location must contain one of these. Leave empty to accept any location.
+  # (Bare "remote" is left out: most remote postings are limited to the US or Europe; remote
+  # roles open to India usually say "India" and are matched by it.)
+  locations: [india, bengaluru, bangalore, pune, mumbai, hyderabad, chennai, gurgaon, gurugram,
+              noida, delhi, kochi]
+  max_age_days: 45
+
+ranking:
+  # Jobs sent to the LLM for requirement extraction per run (each uses 1 Gemini request).
+  analyze_per_run: 5

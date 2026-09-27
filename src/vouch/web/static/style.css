@@ -252,6 +252,42 @@ mark {
 }
 .keywords { font-family: var(--doc); }
 
+/* --- matches --------------------------------------------------------------------------- */
+
+/* Fit score: a number inside a ring whose filled share is the score. */
+.fit-score {
+  --score: 0;
+  display: inline-grid; place-items: center; flex: none;
+  width: 2.75rem; height: 2.75rem; border-radius: 50%;
+  font-weight: 700; font-size: 1rem;
+  background:
+    radial-gradient(closest-side, var(--sheet) 76%, transparent 78%),
+    conic-gradient(var(--ok) calc(var(--score) * 1%), var(--rule) 0);
+}
+.fit-cell { width: 5.5rem; }
+.basis { display: block; color: var(--muted); font-size: 0.75rem; margin-top: var(--s1); }
+.skills-cell { font-size: 0.9rem; }
+.have, .lack { display: block; }
+.have { color: var(--ok); }
+.lack { color: var(--flag); }
+
+.gaps {
+  background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px;
+  padding: var(--s3) var(--s4); margin: var(--s4) 0;
+}
+.gaps h2 { margin-top: 0; font-size: 1rem; }
+.gap-list { display: flex; flex-wrap: wrap; gap: var(--s2); list-style: none; padding: 0; margin: 0; }
+.gap-list li { border: 1px solid var(--rule); border-radius: 4px; padding: var(--s1) var(--s2); }
+.gap-list .count { color: var(--muted); font-size: 0.85rem; }
+
+.fit-box {
+  display: flex; gap: var(--s4); align-items: flex-start;
+  background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px;
+  padding: var(--s3) var(--s4); margin: var(--s4) 0;
+}
+.fit-box p { margin: 0 0 var(--s1); }
+.fit-title { font-weight: 700; }
+
 /* --- applications & profile ------------------------------------------------------------- */
 
 .stage h2 { display: flex; align-items: baseline; gap: var(--s2); }

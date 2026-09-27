@@ -10,6 +10,7 @@ resumes/*
 !resumes/.gitkeep
 profile/profile.yaml
 profile/variants/*.yaml
+profile/search.yaml
 output/
 
 # Personal planning notes (roadmap, project ideas)

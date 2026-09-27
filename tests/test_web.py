@@ -165,8 +165,6 @@ def test_highlight_merges_adjacent_new_words():
 
 
 def test_tailor_button_runs_and_redirects_to_new_version(client, db, seeded, monkeypatch):
-    import time
-
     import vouch.web.app as web
 
     job_id, version_id = seeded
@@ -179,12 +177,42 @@ def test_tailor_button_runs_and_redirects_to_new_version(client, db, seeded, mon
         "create_version",
         lambda session, job, profile, llm, settings: session.get(ResumeVersion, version_id),
     )
+
+    # Run the "background" work inline: the test shares one DB connection between the request
+    # and the worker, which real deployments don't, so a real thread could race on savepoints.
+    class InlineThread:
+        def __init__(self, target, args=(), daemon=None):
+            self.target, self.args = target, args
+
+        def start(self):
+            self.target(*self.args)
+
+    monkeypatch.setattr(web.threading, "Thread", InlineThread)
     started = client.post(f"/jobs/{job_id}/tailor")
     assert started.status_code == 200
 
-    for _ in range(50):  # the run happens in a background thread
-        status = client.get(f"/jobs/{job_id}/tailor")
-        if "HX-Redirect" in status.headers:
-            break
-        time.sleep(0.05)
+    status = client.get(f"/jobs/{job_id}/tailor")
     assert status.headers["HX-Redirect"] == f"/versions/{version_id}"
+
+
+def test_background_failure_is_reported_not_swallowed(client, seeded, monkeypatch):
+    import vouch.web.app as web
+
+    job_id, _ = seeded
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    class InlineThread:
+        def __init__(self, target, args=(), daemon=None):
+            self.target, self.args = target, args
+
+        def start(self):
+            self.target(*self.args)
+
+    monkeypatch.setattr(web, "get_llm", lambda settings: None)
+    monkeypatch.setattr(web, "create_version", boom)
+    monkeypatch.setattr(web.threading, "Thread", InlineThread)
+    client.post(f"/jobs/{job_id}/tailor")
+    page = client.get(f"/jobs/{job_id}/tailor")
+    assert "Tailoring stopped: Unexpected error (RuntimeError): disk full" in page.text

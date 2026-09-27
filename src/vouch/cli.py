@@ -300,6 +300,74 @@ def main() -> None:
         raise SystemExit(1) from e
 
 
+DEFAULT_SEARCH = Path("profile/search.yaml")
+
+
+@app.command("discover")
+def discover_cmd(
+    analyze: Annotated[
+        int | None, typer.Option(help="Jobs to send to the LLM (default: ranking.analyze_per_run)")
+    ] = None,
+    check: Annotated[
+        bool, typer.Option(help="Only fetch and filter; no database or Gemini calls")
+    ] = False,
+    search_path: Annotated[Path, typer.Option("--search", exists=True)] = DEFAULT_SEARCH,
+    profile_path: Annotated[Path, typer.Option("--profile", exists=True)] = DEFAULT_PROFILE,
+) -> None:
+    """Fetch jobs from your target companies, keep the ones that fit your filters, and rank them."""
+    from vouch.db import get_sessionmaker
+    from vouch.discovery.config import load_search
+    from vouch.discovery.run import discover, fetch_all
+    from vouch.llm import get_llm
+
+    config = load_search(search_path)
+    if check:
+        for c in fetch_all(config):
+            status = c.error or f"{len(c.kept):>3} of {c.listed:>4} kept"
+            typer.echo(f"{c.name:<16} {status}")
+            for job in c.kept[:5]:
+                typer.echo(f"{'':<18}{job.title} | {job.location}")
+        return
+
+    settings = get_settings()
+    profile = _load(profile_path)
+    with get_sessionmaker()() as session:
+        result = discover(
+            session, config, profile, get_llm(settings), settings, analyze=analyze, log=typer.echo
+        )
+    failed = [c.name for c in result.companies if c.error]
+    typer.echo(
+        f"\n{sum(len(c.kept) for c in result.companies)} jobs kept, "
+        f"{result.new_or_changed} new or changed, {result.embedded} embedded, "
+        f"{len(result.analyzed)} analysed, {result.scored} scored"
+        + (f"; failed: {', '.join(failed)}" if failed else "")
+    )
+    for note in result.notes:
+        typer.echo(f"Note: {note}")
+    typer.echo("See the ranking with `vouch matches` or on the Matches page.")
+
+
+@app.command("matches")
+def matches_cmd(limit: int = 20) -> None:
+    """Jobs ranked by estimated fit (score needs extracted requirements; others by similarity)."""
+    from vouch.db import get_sessionmaker
+    from vouch.discovery.run import ranked_matches, skill_gaps
+
+    with get_sessionmaker()() as session:
+        rows = ranked_matches(session, limit=limit)
+        for job, match, app in rows:
+            score = f"{match.score:5.1f}" if match.score is not None else "    -"
+            sim = f"{match.similarity:.2f}" if match.similarity is not None else "  - "
+            status = f" [{app.status}]" if app else ""
+            typer.echo(f"{job.id:>4}  fit {score}  sim {sim}  {job.company} | {job.title}{status}")
+            if match.fit and match.fit["missing_must"]:
+                typer.echo(f"{'':<25}missing: {', '.join(match.fit['missing_must'])}")
+        gaps = skill_gaps(rows)
+    if gaps:
+        gap_list = ", ".join(f"{name} ({n})" for name, n in gaps)
+        typer.echo(f"\nMost-requested skills you don't show: {gap_list}")
+
+
 @app.command("web")
 def web(
     port: Annotated[int, typer.Option(help="Port")] = 8000,
