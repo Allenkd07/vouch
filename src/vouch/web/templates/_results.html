@@ -1,0 +1,30 @@
+{% set p = b.params %}
+<section id="results" class="results" aria-live="polite">
+  <div class="results-head">
+    <p class="showing">
+      {% if b.rows|length == b.total %}{{ b.total }} job{{ 's' if b.total != 1 }}
+      {% else %}{{ b.rows|length }} of {{ b.total }} jobs{% endif %}
+      <span class="muted">· {{ SORTS[p.sort]|lower }}</span>
+    </p>
+    {% if p.active() %}
+    <ul class="active-filters" aria-label="Active filters">
+      {% if p.q %}<li><a href="?{{ query_string(p, q='') }}">“{{ p.q }}” <span aria-label="remove">×</span></a></li>{% endif %}
+      {% if p.fit %}<li><a href="?{{ query_string(p, fit='') }}">{{ FITS[p.fit] }} <span aria-label="remove">×</span></a></li>{% endif %}
+      {% if p.status %}<li><a href="?{{ query_string(p, status='') }}">{{ 'Not tracking' if p.status == 'none' else p.status|capitalize }} <span aria-label="remove">×</span></a></li>{% endif %}
+      {% if p.city %}<li><a href="?{{ query_string(p, city='') }}">{{ p.city }} <span aria-label="remove">×</span></a></li>{% endif %}
+      {% if p.company %}<li><a href="?{{ query_string(p, company='') }}">{{ p.company }} <span aria-label="remove">×</span></a></li>{% endif %}
+      <li class="clear"><a href="{{ request.url.path }}{% if p.sort != default_sort %}?sort={{ p.sort }}{% endif %}">Clear all</a></li>
+    </ul>
+    {% endif %}
+  </div>
+
+  {% if b.rows %}
+  <div class="job-list">
+    {% for row in b.rows %}{% include "_job_row.html" %}{% endfor %}
+  </div>
+  {% elif b.total %}
+  <p class="empty">No jobs match these filters. <a href="{{ request.url.path }}">Clear all filters</a></p>
+  {% else %}
+  <p class="empty">{{ empty_message }}</p>
+  {% endif %}
+</section>

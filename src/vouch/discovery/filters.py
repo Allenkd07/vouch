@@ -7,7 +7,7 @@ from vouch.discovery.config import Filters
 from vouch.jobs.sources import FetchedJob
 
 
-def _has_phrase(text: str, phrases: list[str]) -> str | None:
+def has_phrase(text: str, phrases: list[str]) -> str | None:
     """First phrase found in text as whole words (case-insensitive), else None."""
     lowered = text.lower()
     for phrase in phrases:
@@ -32,11 +32,11 @@ def age_days(posted_at: str | None, now: datetime | None = None) -> int | None:
 def rejection_reason(job: FetchedJob, filters: Filters, now: datetime | None = None) -> str | None:
     """Why this job doesn't match the filters, or None if it passes."""
     title = job.title or ""
-    if filters.title_include and not _has_phrase(title, filters.title_include):
+    if filters.title_include and not has_phrase(title, filters.title_include):
         return "title"
-    if excluded := _has_phrase(title, filters.title_exclude):
+    if excluded := has_phrase(title, filters.title_exclude):
         return f"title contains {excluded!r}"
-    if filters.locations and not _has_phrase(job.location or "", filters.locations):
+    if filters.locations and not has_phrase(job.location or "", filters.locations):
         return "location"
     age = age_days(job.posted_at, now)
     if filters.max_age_days is not None and age is not None and age > filters.max_age_days:

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from vouch.config import get_settings
 from vouch.db import Application, Job, Match, ResumeVersion, get_sessionmaker
 from vouch.discovery.config import DEFAULT_SEARCH, load_search
-from vouch.discovery.run import discover, ranked_matches, rescore_job, skill_gaps
+from vouch.discovery.run import discover, rescore_job, skill_gaps
 from vouch.jobs.requirements import analyze_job
 from vouch.jobs.sources import FetchError
 from vouch.jobs.store import save_analysis
@@ -37,6 +37,7 @@ from vouch.services import (
 )
 from vouch.tailoring.document import ResumeDoc
 from vouch.tailoring.pipeline import TailorReport
+from vouch.web import browse as browsing
 from vouch.web.diff import highlight_changes
 
 HERE = Path(__file__).parent
@@ -61,6 +62,14 @@ def create_app(
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters["changes"] = lambda b: highlight_changes(b.original, b.text)
     templates.env.globals["STATUSES"] = STATUSES
+    # Cache-busting: /static/style.css?v=<mtime> changes whenever the file does, so browsers
+    # never keep an old stylesheet or script.
+    templates.env.globals["static_version"] = lambda name: int(
+        (HERE / "static" / name).stat().st_mtime
+    )
+    templates.env.globals["SORTS"] = browsing.SORTS
+    templates.env.globals["FITS"] = browsing.FITS
+    templates.env.globals["query_string"] = browsing.query_string
     runs: dict[int, TailorRun] = {}
     discovery: dict[str, TailorRun] = {}  # single entry under "run"
 
@@ -98,18 +107,15 @@ def create_app(
         return RedirectResponse("/jobs", status_code=303)
 
     def jobs_page(request: Request, session: Session, error: str = "", form: dict | None = None):
-        jobs = session.scalars(select(Job).order_by(Job.fetched_at.desc())).all()
-        rows = []
-        for job in jobs:
-            version = latest_version(session, job.id)
-            rows.append(
-                {
-                    "job": job,
-                    "app": get_application(session, job.id),
-                    "coverage": coverage_counts(version),
-                }
-            )
-        return page(request, "jobs.html", rows=rows, error=error, form=form or {})
+        params = browsing.parse_params(request.query_params, default_sort="added")
+        rows = browsing.load_rows(session, active_only=False)
+        return page(
+            request,
+            "jobs.html",
+            b=browsing.browse(rows, params),
+            error=error,
+            form=form or {},
+        )
 
     @app.get("/jobs")
     def jobs(request: Request, session: Session = Depends(get_session)):
@@ -171,9 +177,12 @@ def create_app(
     def job_analyze(job_id: int, request: Request, session: Session = Depends(get_session)):
         job = session.get(Job, job_id) or _not_found()
         settings = get_settings()
+        inline = request.headers.get("HX-Request") == "true"  # the button on a list row
         try:
             result = analyze_job(job.description, get_llm(settings), title=job.title)
         except LLMError as e:
+            if inline:
+                return page(request, "_job_row.html", row=_row_for(session, job), error=str(e))
             return job_detail(job_id, request, session, error=str(e))
         save_analysis(job, result, settings.llm_model)
         try:
@@ -184,7 +193,12 @@ def create_app(
         except (OSError, ValidationError):
             pass  # the score appears after the next discovery run instead
         session.commit()
+        if inline:
+            return page(request, "_job_row.html", row=_row_for(session, job))
         return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+    def _row_for(session: Session, job: Job) -> browsing.Row:
+        return next(r for r in browsing.load_rows(session, active_only=False) if r.job.id == job.id)
 
     @app.post("/jobs/{job_id}/status")
     def job_status(
@@ -294,12 +308,15 @@ def create_app(
 
     @app.get("/matches")
     def matches(request: Request, session: Session = Depends(get_session)):
-        rows = ranked_matches(session, limit=100)
+        params = browsing.parse_params(request.query_params, default_sort="fit")
+        rows = browsing.load_rows(session, active_only=True)
+        rows = [r for r in rows if r.match is not None and r.status != "rejected"]
+        ranked = sorted(rows, key=lambda r: (r.score is None, -(r.score or 0)))
         return page(
             request,
             "matches.html",
-            rows=rows,
-            gaps=skill_gaps(rows),
+            b=browsing.browse(rows, params),
+            gaps=skill_gaps([(r.job, r.match, r.app) for r in ranked]),
             run=discovery.get("run"),
             has_search=search_path.exists(),
         )

@@ -224,8 +224,23 @@ def test_discover_run(session):
     assert second.new_or_changed == 0 and job.id not in second.analyzed
     assert not any(t.startswith("Backend Engineer\nAcme") for t in sent)  # only the profile
 
+    # Embedding quota gone: similarity from the earlier run is kept, not wiped.
+    from vouch.llm import LLMError
+
+    def no_quota(texts, dimensions=None):
+        raise LLMError("quota exhausted")
+
+    llm.embed = no_quota
+    offline = discover(
+        session, config, profile, llm, settings, client=client, now=NOW + timedelta(days=2)
+    )
+    assert any("kept earlier values" in n for n in offline.notes)
+    kept = [r for r in ranked_matches(session, now=NOW + timedelta(days=2)) if r[0].id == job.id]
+    assert kept[0][1].similarity == match.similarity is not None
+    llm.embed = real_embed
+
     # Posting closed: once unseen for more than ACTIVE_DAYS it drops out of the ranking.
-    later = NOW + timedelta(days=5)
+    later = NOW + timedelta(days=6)  # last seen on day 2; more than ACTIVE_DAYS ago
     empty = _mock_client({GH_URL: {"jobs": []}})
     discover(session, config, profile, llm, settings, client=empty, now=later)
     assert all(r[0].id != job.id for r in ranked_matches(session, now=later))
@@ -253,3 +268,36 @@ def test_gemini_embed_falls_back_when_a_batch_comes_back_combined():
     vectors = llm.embed(["a", "b", "c"], dimensions=2)
     assert vectors == [[0.6, 0.8]] * 3  # one per text, unit length
     assert calls == [["a", "b", "c"], "a", "b", "c"]
+
+
+# --- company probe -------------------------------------------------------------------------------
+
+
+def test_slug_variants_and_names_file():
+    from vouch.discovery.probe import read_names, slug_variants
+
+    assert slug_variants("Pine Labs") == ["pinelabs", "pine-labs", "pinelabsindia", "pinelabshq"]
+    assert slug_variants("Cult.fit") == ["cultfit", "cult-fit", "cultfitindia", "cultfithq"]
+    assert slug_variants("CRED") == ["cred", "credindia", "credhq"]  # no duplicate for one word
+    assert read_names("# fintech\nCRED\n\nGroww\nCRED\n") == ["CRED", "Groww"]
+
+
+def test_probe_keeps_boards_that_answer_and_counts_india_jobs():
+    from vouch.discovery.probe import probe
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v0/postings/acme":
+            return httpx.Response(
+                200,
+                json=[
+                    {"text": "SDE II", "categories": {"location": "Bengaluru"}, "id": "1"},
+                    {"text": "Sales", "categories": {"location": "London"}, "id": "2"},
+                ],
+            )
+        return httpx.Response(404, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    found = probe(["Acme"], client=client, workers=2)
+    assert [(f.ats, f.board, f.india, f.total, f.sample) for f in found] == [
+        ("lever", "acme", 1, 2, ["SDE II"])
+    ]

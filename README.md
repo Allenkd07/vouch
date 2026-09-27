@@ -83,6 +83,15 @@ uv run vouch discover              # fetch, store, rank, extract requirements fo
 uv run vouch matches               # ranked list + skills your best matches ask for
 ```
 
+To find more companies to watch, list names (one per line) and probe them. It tries the usual
+board spellings on Greenhouse, Lever and Ashby and prints the ones with openings in India, with
+sample titles so a same-named company can be spotted, plus lines to paste into `search.yaml`:
+
+```bash
+uv run vouch companies probe --file data/india_companies.txt
+uv run vouch companies probe "Pine Labs" Razorpay
+```
+
 A funnel from free to expensive, so the Gemini free tier is enough:
 
 1. **Fetch** every open job from the companies' public boards (Greenhouse, Lever, Ashby,
@@ -98,8 +107,6 @@ A funnel from free to expensive, so the Gemini free tier is enough:
    when you tailor a resume.
 
 Postings not seen on their board for 3 days drop out of the ranking.
-
-To run it daily on Windows, schedule `uv run vouch discover` with Task Scheduler.
 
 ## Web UI
 

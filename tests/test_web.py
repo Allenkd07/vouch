@@ -216,3 +216,16 @@ def test_background_failure_is_reported_not_swallowed(client, seeded, monkeypatc
     client.post(f"/jobs/{job_id}/tailor")
     page = client.get(f"/jobs/{job_id}/tailor")
     assert "Tailoring stopped: Unexpected error (RuntimeError): disk full" in page.text
+
+
+def test_job_lists_filter_and_show_the_row(client, seeded):
+    page = client.get("/jobs", params={"q": "backend", "company": "Acme"})
+    assert page.status_code == 200
+    assert 'id="browser"' in page.text and "Backend Engineer" in page.text
+    assert "Clear all" in page.text  # active filters shown
+
+    none = client.get("/jobs", params={"q": "no such job anywhere"})
+    assert "No jobs match these filters" in none.text
+
+    matches = client.get("/matches", params={"sort": "similar"})
+    assert matches.status_code == 200 and "Most similar to your profile" in matches.text

@@ -1,16 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Matches · Vouch{% endblock %}
+{% block main_class %}page wide fill{% endblock %}
 {% block content %}
-<div class="job-head">
+<div class="page-head">
   <div>
     <h1>Matches</h1>
-    <p class="lede">Open jobs from your target companies, best fit first. Fit compares each job's technical requirements with your profile and adjusts for seniority; jobs without a score haven't had their requirements read yet.</p>
+    <p class="lede">Open jobs at your target companies, best fit first. <span class="muted">A job gets a fit score once its requirements are read.</span></p>
   </div>
+  {% if has_search %}{% include "_discover.html" %}{% endif %}
 </div>
 {% if not has_search %}
 <p class="error" role="alert">No search settings yet. Copy <code>profile/search.example.yaml</code> to <code>profile/search.yaml</code> and list the companies you want to watch.</p>
-{% else %}
-{% include "_discover.html" %}
 {% endif %}
 
 {% if gaps %}
@@ -19,45 +19,13 @@
   <ul class="gap-list">
     {% for name, n in gaps %}<li>{{ name }} <span class="count">{{ n }} job{{ 's' if n != 1 }}</span></li>{% endfor %}
   </ul>
-  <p class="hint">Worth learning, or worth adding to your profile if you've already used them.</p>
 </section>
 {% endif %}
 
-{% if rows %}
-<table class="jobs matches">
-  <thead>
-    <tr><th scope="col">Fit</th><th scope="col">Role</th><th scope="col">What matches</th><th scope="col">Status</th></tr>
-  </thead>
-  <tbody>
-  {% for job, match, app in rows %}
-    <tr>
-      <td class="fit-cell">
-        {% if match.score is not none %}
-          <span class="fit-score" style="--score: {{ match.score }}">{{ match.score|round|int }}</span>
-          {% if match.fit.total %}<span class="basis">{{ match.fit.checked }} of {{ match.fit.total }} checked</span>{% endif %}
-        {% else %}
-          <span class="muted" title="Requirements not extracted yet">Not scored</span>
-        {% endif %}
-      </td>
-      <td>
-        <a class="role" href="/jobs/{{ job.id }}">{{ job.title }}</a>
-        <span class="company">{{ job.company }}{% if job.location %}, {{ job.location }}{% endif %}</span>
-      </td>
-      <td class="skills-cell">
-        {% if match.fit %}
-          {% if match.fit.matched %}<span class="have">{{ match.fit.matched|join(', ') }}</span>{% endif %}
-          {% if match.fit.missing_must %}<span class="lack">Missing: {{ match.fit.missing_must|join(', ') }}</span>{% endif %}
-          {% for note in match.fit.notes %}<span class="lack">{{ note|capitalize }}</span>{% endfor %}
-        {% else %}
-          <span class="muted">Open the job to read its requirements</span>
-        {% endif %}
-      </td>
-      <td>{% with job_id=job.id %}{% include "_status.html" %}{% endwith %}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p class="empty">No matches yet. Use "Find new jobs" to check your target companies.</p>
-{% endif %}
+<div class="browser" id="browser">
+  {% include "_filters.html" %}
+  {% with default_sort='fit', empty_message='No matches yet. Use "Find new jobs" to check your target companies.' %}
+    {% include "_results.html" %}
+  {% endwith %}
+</div>
 {% endblock %}

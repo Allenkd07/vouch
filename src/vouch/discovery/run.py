@@ -124,7 +124,14 @@ def discover(
     try:
         similarity, result.embedded = _embed_and_rank(session, active, profile, llm, settings)
     except LLMError as e:
-        result.notes.append(f"Similarity ranking skipped: {e}")
+        # Keep the similarity from earlier runs rather than wiping it; new jobs go without.
+        previous = session.execute(
+            select(Match.job_id, Match.similarity).where(
+                Match.job_id.in_([j.id for j in active]), Match.similarity.is_not(None)
+            )
+        ).all()
+        similarity = {job_id: sim for job_id, sim in previous}
+        result.notes.append(f"Similarity not updated (kept earlier values): {e}")
 
     # 4. Extract requirements for the most similar unanalysed jobs (the LLM step).
     candidates = sorted(

@@ -1,0 +1,43 @@
+{% set job, match, fit = row.job, row.match, row.match.fit if row.match else none %}
+<article class="job-row" id="job-{{ job.id }}">
+  <div class="job-fit">
+    {% if row.score is not none %}
+      <span class="fit-score" style="--score: {{ row.score }}" title="Estimated fit">{{ row.score|round|int }}</span>
+      {% if fit and fit.total %}<span class="basis">{{ fit.checked }}/{{ fit.total }} checked</span>{% endif %}
+    {% else %}
+      <span class="fit-score unscored" title="Requirements not read yet">?</span>
+    {% endif %}
+  </div>
+
+  <div class="job-main">
+    <h3 class="job-title">
+      <span class="mono" style="--hue: {{ row.hue }}" aria-hidden="true">{{ row.initials }}</span>
+      <a href="/jobs/{{ job.id }}">{{ job.title or 'Untitled role' }}</a>
+    </h3>
+    <p class="job-meta">
+      <span class="job-company">{{ job.company or 'Unknown company' }}</span>
+      {% for city in row.cities %}<span class="tag place">{{ city }}</span>{% endfor %}
+      {% if row.age is not none %}<span class="muted">{{ 'Posted today' if row.age <= 0 else 'Posted ' ~ row.age ~ ' day' ~ ('s' if row.age != 1) ~ ' ago' }}</span>{% endif %}
+      {% if job.url and not job.url.startswith('manual:') %}<a class="small-link" href="{{ job.url }}" target="_blank" rel="noopener">Posting</a>{% endif %}
+      {% if row.similarity is not none %}<span class="sim" title="Similarity between this posting and your profile"><span class="sim-bar" style="--sim: {{ ((row.similarity - 0.55) / 0.30 * 100)|round|int }}"></span>similar</span>{% endif %}
+    </p>
+    {% if fit %}
+    <ul class="chips" aria-label="Requirements">
+      {% for name in fit.matched %}<li class="chip have">{{ name }}</li>{% endfor %}
+      {% for name in fit.missing_must %}<li class="chip lack" title="Required, not in your profile">{{ name }}</li>{% endfor %}
+      {% for note in fit.notes %}<li class="chip note">{{ note|capitalize }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  </div>
+
+  <div class="job-actions">
+    {% with job_id=job.id, app=row.app %}{% include "_status.html" %}{% endwith %}
+    {% if not job.analysis %}
+    <button type="button" class="small" hx-post="/jobs/{{ job.id }}/analyze" hx-target="#job-{{ job.id }}"
+            hx-swap="outerHTML" hx-disabled-elt="this">
+      <span class="idle-label">Read requirements</span><span class="busy-label">Reading…</span>
+    </button>
+    {% endif %}
+  </div>
+</article>

@@ -368,6 +368,56 @@ def matches_cmd(limit: int = 20) -> None:
         typer.echo(f"\nMost-requested skills you don't show: {gap_list}")
 
 
+companies_app = typer.Typer(no_args_is_help=True, help="Target companies for job discovery")
+app.add_typer(companies_app, name="companies")
+
+
+@companies_app.command("probe")
+def companies_probe(
+    names: Annotated[list[str] | None, typer.Argument(help="Company names to check")] = None,
+    file: Annotated[
+        Path | None, typer.Option("--file", "-f", exists=True, help="One company name per line")
+    ] = None,
+    min_india: Annotated[
+        int, typer.Option(help="Only report boards with this many India jobs")
+    ] = 1,
+    search_path: Annotated[Path, typer.Option("--search")] = DEFAULT_SEARCH,
+) -> None:
+    """Find companies' public job boards (Greenhouse, Lever, Ashby) and their India openings."""
+    from vouch.discovery.config import load_search
+    from vouch.discovery.probe import probe, read_names
+
+    wanted = list(names or [])
+    if file:
+        wanted += read_names(file.read_text(encoding="utf-8"))
+    if not wanted:
+        raise typer.BadParameter("give company names, or --file with one per line")
+
+    configured = set()
+    if search_path.exists():
+        configured = {(c.ats, c.board) for c in load_search(search_path).companies}
+
+    typer.echo(f"Checking {len(wanted)} companies on Greenhouse, Lever and Ashby...")
+    found = [f for f in probe(wanted) if f.india >= min_india]
+    new = [f for f in found if (f.ats, f.board) not in configured]
+    for f in found:
+        mark = "   " if (f.ats, f.board) in configured else "NEW"
+        typer.echo(
+            f"{mark} {f.name:<22} {f.ats:<10} {f.board:<18} india {f.india:>3} / {f.total:<4}"
+        )
+        for title in f.sample:
+            typer.echo(f"{'':<27}{title}")
+    missing = len(set(wanted) - {f.name for f in found})
+    typer.echo(
+        f"\n{len(found)} boards with India openings ({len(new)} new). "
+        f"Not found on these boards, or no India openings: {missing}."
+    )
+    if new:
+        typer.echo("\nCheck the sample titles above, then add these to profile/search.yaml:")
+        for f in new:
+            typer.echo(f"  - {{name: {f.name}, ats: {f.ats}, board: {f.board}}}")
+
+
 @app.command("web")
 def web(
     port: Annotated[int, typer.Option(help="Port")] = 8000,

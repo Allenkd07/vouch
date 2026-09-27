@@ -1,0 +1,60 @@
+{# Filter sidebar. Every change reloads #browser (sidebar counts + results) via htmx and keeps
+   the filters in the URL. The search box has an id so htmx keeps focus in it while typing. #}
+{% set p = b.params %}
+<form class="filters" method="get" action="{{ request.url.path }}"
+      hx-get="{{ request.url.path }}" hx-target="#browser" hx-select="#browser" hx-swap="outerHTML"
+      hx-push-url="true" hx-trigger="change, input changed delay:300ms from:find input[name=q], submit">
+  <details class="filters-toggle" open>
+    <summary>Filters{% if p.active() %} <span class="count">on</span>{% endif %}</summary>
+
+    <label class="field">
+      <span>Search</span>
+      <input type="search" id="job-search" name="q" value="{{ p.q }}" placeholder="Title, company or city" autocomplete="off">
+    </label>
+
+    <label class="field">
+      <span>Sort by</span>
+      <select name="sort">
+        {% for value, label in SORTS.items() %}
+        <option value="{{ value }}" {% if p.sort == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <fieldset class="facet-group">
+      <legend>Fit</legend>
+      {% for value, label in FITS.items() %}
+      <label class="facet"><input type="radio" name="fit" value="{{ value }}" {% if p.fit == value %}checked{% endif %}><span>{{ label }}</span></label>
+      {% endfor %}
+    </fieldset>
+
+    <fieldset class="facet-group">
+      <legend>Status</legend>
+      <label class="facet"><input type="radio" name="status" value="" {% if not p.status %}checked{% endif %}><span>Any</span></label>
+      {% for value in ['none'] + STATUSES %}
+        {% set n = b.statuses.get(value, 0) %}
+        {% if n or p.status == value %}
+        <label class="facet"><input type="radio" name="status" value="{{ value }}" {% if p.status == value %}checked{% endif %}><span>{{ 'Not tracking' if value == 'none' else value|capitalize }}</span><span class="n">{{ n }}</span></label>
+        {% endif %}
+      {% endfor %}
+    </fieldset>
+
+    <fieldset class="facet-group">
+      <legend>City</legend>
+      <label class="facet"><input type="radio" name="city" value="" {% if not p.city %}checked{% endif %}><span>Any</span></label>
+      {% for name, n in b.cities %}
+      <label class="facet"><input type="radio" name="city" value="{{ name }}" {% if p.city == name %}checked{% endif %}><span>{{ name }}</span><span class="n">{{ n }}</span></label>
+      {% endfor %}
+    </fieldset>
+
+    <fieldset class="facet-group companies">
+      <legend>Company</legend>
+      <label class="facet"><input type="radio" name="company" value="" {% if not p.company %}checked{% endif %}><span>Any</span></label>
+      {% for name, n in b.companies %}
+      <label class="facet"><input type="radio" name="company" value="{{ name }}" {% if p.company == name %}checked{% endif %}><span>{{ name }}</span><span class="n">{{ n }}</span></label>
+      {% endfor %}
+    </fieldset>
+
+    <noscript><button type="submit">Apply filters</button></noscript>
+  </details>
+</form>

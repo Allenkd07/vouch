@@ -1,0 +1,267 @@
+# Candidate companies for `vouch companies probe --file data/india_companies.txt`.
+# One company per line. The probe tries common board-slug spellings on Greenhouse, Lever and
+# Ashby and reports the ones with openings in India. Lines starting with # are ignored.
+
+# Fintech
+Razorpay
+CRED
+Groww
+Zerodha
+PhonePe
+Paytm
+Jupiter
+Fi Money
+Niyo
+Slice
+OneCard
+Uni Cards
+KreditBee
+Moneyview
+Navi
+Fibe
+Lendingkart
+Indifi
+Rupeek
+Jar
+Dhan
+Upstox
+Smallcase
+Scripbox
+Kuvera
+INDmoney
+ClearTax
+Khatabook
+OkCredit
+Vyapar
+BharatPe
+Pine Labs
+Juspay
+Cashfree
+Setu
+M2P
+Perfios
+Signzy
+IDfy
+HyperVerge
+Bureau
+Zeta
+Decentro
+Instamojo
+Simpl
+PayU
+MobiKwik
+Acko
+Digit Insurance
+Policybazaar
+Turtlemint
+InsuranceDekho
+Plum
+Onsurity
+Ditto
+
+# Consumer and commerce
+Swiggy
+Zomato
+Meesho
+Flipkart
+Myntra
+Nykaa
+Lenskart
+Zepto
+Blinkit
+BigBasket
+Dunzo
+Ola
+Ola Electric
+Rapido
+Urban Company
+Housing
+NoBroker
+Livspace
+Pepperfry
+boAt
+Mamaearth
+Licious
+FreshToHome
+Country Delight
+Spinny
+Cars24
+CarDekho
+OYO
+MakeMyTrip
+ixigo
+Cleartrip
+redBus
+Practo
+PharmEasy
+Tata 1mg
+Cult.fit
+HealthifyMe
+Udaan
+Jumbotail
+Infra.Market
+Moglix
+OfBusiness
+Zetwerk
+Bizongo
+Shiprocket
+Delhivery
+BlackBuck
+Porter
+Shadowfax
+Xpressbees
+
+# Media, social and gaming
+ShareChat
+Dailyhunt
+Glance
+InMobi
+Pocket FM
+Kuku FM
+Pratilipi
+STAGE
+Dream11
+Dream Sports
+MPL
+Games24x7
+WinZO
+Nazara
+Junglee Games
+
+# Edtech
+Unacademy
+BYJUS
+Vedantu
+upGrad
+Physics Wallah
+Scaler
+Simplilearn
+Eruditus
+Great Learning
+Classplus
+Teachmint
+LEAD School
+Cuemath
+Testbook
+
+# SaaS, developer tools and AI
+Freshworks
+Zoho
+Postman
+BrowserStack
+Chargebee
+Atlan
+Hasura
+Druva
+Icertis
+Innovaccer
+Whatfix
+MoEngage
+CleverTap
+LeadSquared
+Darwinbox
+Gupshup
+Yellow.ai
+Haptik
+Sprinklr
+ThoughtSpot
+MindTickle
+HighRadius
+Capillary
+Netcore
+WebEngage
+Wingify
+Exotel
+Kaleyra
+Kissflow
+Zluri
+Leena AI
+Observe.AI
+Sarvam AI
+Krutrim
+Gnani
+Uniphore
+Rocketlane
+Zenoti
+Facilio
+Sprinto
+Scrut
+Toplyne
+Hevo Data
+RudderStack
+Appsmith
+ToolJet
+SuperTokens
+Requestly
+DevRev
+Composio
+E2E Networks
+Neysa
+Spyne
+Fyle
+Chargebee
+Freshteam
+Mad Street Den
+Vernacular.ai
+Skit
+Observe
+Sigmoid
+Tredence
+Fractal
+LatentView
+MathCo
+Quantiphi
+Tiger Analytics
+
+# Global companies with large engineering teams in India
+Rippling
+Harness
+Tekion
+Rubrik
+Cohesity
+Nutanix
+Zscaler
+Twilio
+Okta
+Gojek
+Grab
+Agoda
+Atlassian
+Intuit
+Uber
+Airbnb
+Stripe
+Coinbase
+MongoDB
+Databricks
+Confluent
+Elastic
+GitLab
+HashiCorp
+Snowflake
+Datadog
+Cloudflare
+Twitch
+Pinterest
+Reddit
+Discord
+Canva
+Miro
+Notion
+Figma
+Zendesk
+Freshdesk
+PhysicsWallah
+Deel
+Remote
+Gusto
+Brex
+Ramp
+Plaid
+Chime
+Robinhood
+Wise
+Revolut
+Checkout.com
+Adyen
+Klarna
