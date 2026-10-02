@@ -92,15 +92,19 @@ uv run vouch companies probe --file data/india_companies.txt
 uv run vouch companies probe "Pine Labs" Razorpay
 ```
 
-A funnel from free to expensive, so the Gemini free tier is enough:
+A funnel from free to expensive, so the Gemini free tier is enough. Reading requirements uses
+`EXTRACTION_MODEL` (default `gemini-3.5-flash-lite`), which has its own daily quota, separate
+from `LLM_MODEL` used for tailoring resumes.
 
 1. **Fetch** every open job from the companies' public boards (Greenhouse, Lever, Ashby,
    Workday). Free.
 2. **Filter** by title and location rules from `search.yaml`. Free.
 3. **Rank by similarity**: embed new or changed postings and the profile (pgvector cosine
    similarity). Unchanged postings are never re-embedded.
-4. **Extract requirements** for the `analyze_per_run` most similar unanalysed jobs (1 Gemini
-   request each); the rest wait for later runs, or use **Read requirements** on the job page.
+4. **Extract requirements** for the `analyze_per_run` most similar unanalysed jobs, `batch_size`
+   postings per Gemini request (30 jobs = 5 requests by default). Each result is checked against
+   its own posting, so a requirement borrowed from another posting in the batch gets flagged.
+   The rest wait for later runs, or use **Read requirements** on the job page.
 5. **Score fit** without an LLM: technical requirements that name concrete technologies are
    matched against the profile's skills and bullet facts, with a penalty for seniority gaps.
    The page says how many requirements the score is based on; the rest are checked properly

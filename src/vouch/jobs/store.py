@@ -39,10 +39,10 @@ def upsert_job(session: Session, fetched: FetchedJob) -> tuple[Job, bool]:
     return job, changed
 
 
-def needs_analysis(job: Job, model: str) -> bool:
-    return (
-        job.analysis is None or job.analysis_hash != job.content_hash or job.analysis_model != model
-    )
+def needs_analysis(job: Job) -> bool:
+    """True when requirements were never extracted or the posting changed since. Switching the
+    extraction model doesn't count: re-reading every job would waste quota (use --reanalyze)."""
+    return job.analysis is None or job.analysis_hash != job.content_hash
 
 
 def save_analysis(job: Job, result: VerifiedAnalysis, model: str) -> None:

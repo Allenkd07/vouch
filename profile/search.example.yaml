@@ -48,8 +48,10 @@ filters:
   max_age_days: 45
 
 ranking:
-  # Jobs sent to the LLM for requirement extraction per run (each uses 1 Gemini request).
-  analyze_per_run: 5
+  # Jobs whose requirements are read per run, most promising first, `batch_size` per Gemini
+  # request (30 jobs / 6 per batch = 5 requests of EXTRACTION_MODEL's daily quota).
+  analyze_per_run: 30
+  batch_size: 6
   # Roles asking for up to this many years of experience aren't penalised; beyond it, the
   # fit score drops 12 points per extra year (at most 40).
   accept_years_up_to: 5

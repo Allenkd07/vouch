@@ -33,7 +33,8 @@ class Filters(BaseModel):
 
 
 class Ranking(BaseModel):
-    analyze_per_run: int = Field(default=5, ge=0)
+    analyze_per_run: int = Field(default=30, ge=0)
+    batch_size: int = Field(default=6, ge=1, le=10)  # postings per extraction request
     accept_years_up_to: float = Field(default=5, ge=0)
 
 

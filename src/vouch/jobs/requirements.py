@@ -78,6 +78,49 @@ def analyze_job(description: str, llm: LLM, *, title: str | None = None) -> Veri
     return verify_analysis(analysis, description)
 
 
+class BatchItem(BaseModel):
+    ref: str = Field(description="The posting's reference, exactly as given in [brackets]")
+    analysis: JobAnalysis
+
+
+class BatchAnalysis(BaseModel):
+    items: list[BatchItem]
+
+
+BATCH_SYSTEM = (
+    SYSTEM
+    + """
+You will receive several postings, each starting with its reference in [brackets]. Analyse each
+posting on its own: every requirement, quote and keyword must come from that posting only.
+Return exactly one item per posting, with its reference."""
+)
+MAX_POSTING_CHARS = 12_000  # keeps a batch's prompt bounded; requirements come early anyway
+
+
+def analyze_jobs(
+    postings: list[tuple[str, str | None, str]], llm: LLM
+) -> dict[str, VerifiedAnalysis]:
+    """Extract requirements for several postings in one request: [(ref, title, description)].
+
+    Each result is verified against its own posting, so a requirement the model borrowed from
+    another posting in the batch fails the quote check and is flagged. Postings the model
+    skipped are simply missing from the result."""
+    if not postings:
+        return {}
+    blocks = [
+        f"=== [{ref}] Job title: {title or 'not given'}\n{description[:MAX_POSTING_CHARS]}"
+        for ref, title, description in postings
+    ]
+    prompt = f"Analyse each of these {len(postings)} job postings.\n\n" + "\n\n".join(blocks)
+    result = llm.generate_json(prompt, BatchAnalysis, system=BATCH_SYSTEM)
+    descriptions = {ref: description for ref, _, description in postings}
+    return {
+        item.ref: verify_analysis(item.analysis, descriptions[item.ref])
+        for item in result.items
+        if item.ref in descriptions
+    }
+
+
 def _normalize(text: str) -> str:
     text = text.lower().replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
     return " ".join(re.findall(r"[a-z0-9+#/.'-]+", text))

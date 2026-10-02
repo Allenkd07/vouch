@@ -55,7 +55,7 @@ class GeminiLLM:
     One retry feeds the validation error back to the model.
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, model: str | None = None):
         if not settings.gemini_api_key:
             raise LLMError("GEMINI_API_KEY is not set (see .env.example)")
         from google import genai
@@ -67,7 +67,7 @@ class GeminiLLM:
             api_key=settings.gemini_api_key,
             http_options=genai.types.HttpOptions(retry_options=retry),
         )
-        self._model = settings.llm_model
+        self._model = model or settings.llm_model
         self._embedding_model = settings.embedding_model
 
     def generate_json(self, prompt: str, schema: type[T], *, system: str | None = None) -> T:
@@ -148,8 +148,15 @@ class FakeLLM:
         return out
 
 
-def get_llm(settings: Settings | None = None) -> LLM:
+def get_llm(settings: Settings | None = None, model: str | None = None) -> LLM:
+    """The LLM for `model` (default: settings.llm_model, used for tailoring)."""
     settings = settings or get_settings()
     if settings.llm_provider == "fake":
         return FakeLLM()
-    return GeminiLLM(settings)
+    return GeminiLLM(settings, model)
+
+
+def get_extraction_llm(settings: Settings | None = None) -> LLM:
+    """The LLM for reading job requirements (settings.extraction_model)."""
+    settings = settings or get_settings()
+    return get_llm(settings, settings.extraction_model)

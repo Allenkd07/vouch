@@ -37,7 +37,7 @@ def db_check() -> None:
 @llm_app.command("check")
 def llm_check() -> None:
     """One structured generation and one embedding against the configured provider."""
-    from vouch.llm import get_llm
+    from vouch.llm import get_extraction_llm, get_llm
 
     class Ping(BaseModel):
         answer: str
@@ -45,8 +45,10 @@ def llm_check() -> None:
     settings = get_settings()
     llm = get_llm(settings)
     reply = llm.generate_json("Reply with answer='pong'.", Ping)
+    extraction = get_extraction_llm(settings).generate_json("Reply with answer='pong'.", Ping)
     vector = llm.embed(["senior backend engineer, Python, PostgreSQL"])[0]
-    typer.echo(f"{settings.llm_model}: {reply.answer!r}")
+    typer.echo(f"{settings.llm_model} (tailoring): {reply.answer!r}")
+    typer.echo(f"{settings.extraction_model} (requirements): {extraction.answer!r}")
     typer.echo(f"{settings.embedding_model}: {len(vector)} dimensions")
 
 
@@ -141,7 +143,7 @@ def job_add(
     """Fetch a job (or read pasted text), store it, and extract its requirements."""
     from vouch.db import get_sessionmaker
     from vouch.jobs.sources import FetchError
-    from vouch.llm import get_llm
+    from vouch.llm import get_extraction_llm
     from vouch.services import add_job
 
     if not url and not text_file:
@@ -151,7 +153,7 @@ def job_add(
         try:
             job, changed = add_job(
                 session,
-                get_llm(settings),
+                get_extraction_llm(settings),
                 settings,
                 url=url,
                 text=text_file.read_text(encoding="utf-8") if text_file else None,
@@ -318,7 +320,7 @@ def discover_cmd(
     from vouch.db import get_sessionmaker
     from vouch.discovery.config import load_search
     from vouch.discovery.run import discover, fetch_all
-    from vouch.llm import get_llm
+    from vouch.llm import get_extraction_llm
 
     config = load_search(search_path)
     if check:
@@ -333,13 +335,19 @@ def discover_cmd(
     profile = _load(profile_path)
     with get_sessionmaker()() as session:
         result = discover(
-            session, config, profile, get_llm(settings), settings, analyze=analyze, log=typer.echo
+            session,
+            config,
+            profile,
+            get_extraction_llm(settings),
+            settings,
+            analyze=analyze,
+            log=typer.echo,
         )
     failed = [c.name for c in result.companies if c.error]
     typer.echo(
         f"\n{sum(len(c.kept) for c in result.companies)} jobs kept, "
         f"{result.new_or_changed} new or changed, {result.embedded} embedded, "
-        f"{len(result.analyzed)} analysed, {result.scored} scored"
+        f"{len(result.analyzed)} analysed in {result.requests} request(s), {result.scored} scored"
         + (f"; failed: {', '.join(failed)}" if failed else "")
     )
     for note in result.notes:

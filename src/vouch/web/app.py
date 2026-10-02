@@ -23,7 +23,7 @@ from vouch.discovery.run import discover, rescore_job, skill_gaps
 from vouch.jobs.requirements import analyze_job
 from vouch.jobs.sources import FetchError
 from vouch.jobs.store import save_analysis
-from vouch.llm import LLMError, get_llm
+from vouch.llm import LLMError, get_extraction_llm, get_llm
 from vouch.profile.schema import lint, load_profile
 from vouch.services import (
     STATUSES,
@@ -135,7 +135,7 @@ def create_app(
         try:
             job, _ = add_job(
                 session,
-                get_llm(settings),
+                get_extraction_llm(settings),
                 settings,
                 url=url.strip() or None,
                 text=text.strip() or None,
@@ -179,12 +179,12 @@ def create_app(
         settings = get_settings()
         inline = request.headers.get("HX-Request") == "true"  # the button on a list row
         try:
-            result = analyze_job(job.description, get_llm(settings), title=job.title)
+            result = analyze_job(job.description, get_extraction_llm(settings), title=job.title)
         except LLMError as e:
             if inline:
                 return page(request, "_job_row.html", row=_row_for(session, job), error=str(e))
             return job_detail(job_id, request, session, error=str(e))
-        save_analysis(job, result, settings.llm_model)
+        save_analysis(job, result, settings.extraction_model)
         try:
             years = (
                 load_search(search_path).ranking.accept_years_up_to if search_path.exists() else 5
@@ -327,7 +327,7 @@ def create_app(
             config = load_search(search_path)
             profile = load_profile(profile_path)
             with (make_session or get_sessionmaker())() as session:
-                result = discover(session, config, profile, get_llm(settings), settings)
+                result = discover(session, config, profile, get_extraction_llm(settings), settings)
             kept = sum(len(c.kept) for c in result.companies)
             failed = [c.name for c in result.companies if c.error]
             message = (

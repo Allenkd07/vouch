@@ -11,7 +11,10 @@ class Settings(BaseSettings):
 
     llm_provider: Literal["gemini", "fake"] = "gemini"
     gemini_api_key: str = ""
-    llm_model: str = "gemini-3.8-flash"
+    llm_model: str = "gemini-3.8-flash"  # resume tailoring (evidence, rewrite, honesty check)
+    # Requirement extraction runs far more often (every discovered job), so it uses a cheaper
+    # model with its own daily quota.
+    extraction_model: str = "gemini-3.5-flash-lite"
     embedding_model: str = "gemini-embedding-2"
 
 

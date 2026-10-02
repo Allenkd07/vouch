@@ -2,7 +2,7 @@
 
 Cost grows left to right, so each step only sees what the previous one kept: fetching and
 filtering are free, embeddings are one batched request, and only `analyze_per_run` jobs reach
-the LLM."""
+the LLM, `batch_size` postings per request."""
 
 from collections import Counter
 from collections.abc import Callable
@@ -21,7 +21,7 @@ from vouch.discovery.boards import list_jobs, workday_details
 from vouch.discovery.config import Company, SearchConfig
 from vouch.discovery.filters import rejection_reason
 from vouch.discovery.fit import Fit, score_fit
-from vouch.jobs.requirements import VerifiedAnalysis, analyze_job
+from vouch.jobs.requirements import VerifiedAnalysis, analyze_jobs
 from vouch.jobs.sources import USER_AGENT, FetchedJob
 from vouch.jobs.store import needs_analysis, save_analysis, upsert_job
 from vouch.llm import LLM, LLMError
@@ -45,6 +45,7 @@ class DiscoveryResult:
     new_or_changed: int = 0
     embedded: int = 0
     analyzed: list[int] = field(default_factory=list)
+    requests: int = 0  # extraction requests made
     scored: int = 0
     notes: list[str] = field(default_factory=list)
 
@@ -133,22 +134,34 @@ def discover(
         similarity = {job_id: sim for job_id, sim in previous}
         result.notes.append(f"Similarity not updated (kept earlier values): {e}")
 
-    # 4. Extract requirements for the most similar unanalysed jobs (the LLM step).
+    # 4. Extract requirements for the most similar unanalysed jobs (the LLM step), several
+    #    postings per request so the daily quota covers many more jobs.
     candidates = sorted(
-        (j for j in active if needs_analysis(j, settings.llm_model)),
-        key=lambda j: -similarity.get(j.id, 0.0),
+        (j for j in active if needs_analysis(j)), key=lambda j: -similarity.get(j.id, 0.0)
     )
-    for job in candidates[:analyze]:
+    todo = candidates[:analyze]
+    batch = config.ranking.batch_size
+    skipped = 0
+    for start in range(0, len(todo), batch):
+        chunk = todo[start : start + batch]
         try:
-            save_analysis(
-                job, analyze_job(job.description, llm, title=job.title), settings.llm_model
-            )
-            session.commit()
-            result.analyzed.append(job.id)
-            log(f"Analysed: {job.title} @ {job.company}")
+            analyses = analyze_jobs([(str(j.id), j.title, j.description) for j in chunk], llm)
         except LLMError as e:
             result.notes.append(f"Stopped extracting requirements: {e}")
             break
+        for job in chunk:
+            if (analysis := analyses.get(str(job.id))) is None:
+                skipped += 1  # the model left it out; a later run retries it
+                continue
+            save_analysis(job, analysis, settings.extraction_model)
+            result.analyzed.append(job.id)
+            log(f"Analysed: {job.title} @ {job.company}")
+        session.commit()
+        result.requests += 1
+    if skipped:
+        result.notes.append(
+            f"{skipped} job(s) were left out of a batch response; retried next run."
+        )
     if len(candidates) > len(result.analyzed):
         result.notes.append(
             f"{len(candidates) - len(result.analyzed)} job(s) still need requirement extraction; "

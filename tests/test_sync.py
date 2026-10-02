@@ -35,7 +35,7 @@ def test_upsert_job_dedupes_by_url_and_content(session):
 
     fetched = FetchedJob("web", "https://x.example/zz-1", "X", "SDE", None, "Build APIs in Go")
     job, changed = upsert_job(session, fetched)
-    assert changed and needs_analysis(job, "m1")
+    assert changed and needs_analysis(job)
 
     analysis = JobAnalysis(
         title="SDE",
@@ -53,9 +53,8 @@ def test_upsert_job_dedupes_by_url_and_content(session):
     save_analysis(job, VerifiedAnalysis(analysis=analysis), "m1")
 
     same, changed = upsert_job(session, fetched)
-    assert same.id == job.id and not changed and not needs_analysis(same, "m1")
-    assert needs_analysis(same, "m2")  # model changed
+    assert same.id == job.id and not changed and not needs_analysis(same)
 
     fetched.description = "Build APIs in Go and Rust"
     _, changed = upsert_job(session, fetched)
-    assert changed and needs_analysis(same, "m1")
+    assert changed and needs_analysis(same)  # posting changed

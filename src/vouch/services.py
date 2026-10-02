@@ -35,15 +35,17 @@ def add_job(
     reanalyze: bool = False,
 ) -> tuple[Job, bool]:
     """Fetch (or take pasted text), store, and analyse a job. Returns (job, changed).
-    Raises FetchError or LLMError; the caller commits."""
+    `llm` should be the extraction LLM (llm.get_extraction_llm). Raises FetchError or
+    LLMError; the caller commits."""
     if not url and not text:
         raise ValueError("give a job link or paste the job description")
     fetched: FetchedJob = manual_job(text, url, company, title) if text else fetch_job(url)
     fetched.company = company or fetched.company
     fetched.title = title or fetched.title
     job, changed = upsert_job(session, fetched)
-    if reanalyze or needs_analysis(job, settings.llm_model):
-        save_analysis(job, analyze_job(job.description, llm, title=job.title), settings.llm_model)
+    if reanalyze or needs_analysis(job):
+        analysis = analyze_job(job.description, llm, title=job.title)
+        save_analysis(job, analysis, settings.extraction_model)
     return job, changed
 
 

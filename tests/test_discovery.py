@@ -187,6 +187,93 @@ def test_workday_pages_past_the_first_response():
     assert len(jobs) == 25 and jobs[-1].url == "https://wd.wd1.myworkdayjobs.com/site/job/24"
 
 
+# --- batched requirement extraction --------------------------------------------------------------
+
+
+def batch_responder(analysis, skip=()):
+    """Fake LLM answer for analyze_jobs: the same analysis for every posting in the prompt."""
+    import re
+
+    from vouch.jobs.requirements import BatchAnalysis, BatchItem
+
+    def respond(prompt, schema):
+        assert schema is BatchAnalysis
+        refs = re.findall(r"^=== \[([^\]]+)\]", prompt, re.M)
+        return BatchAnalysis(
+            items=[BatchItem(ref=r, analysis=analysis) for r in refs if r not in skip]
+        )
+
+    return respond
+
+
+def test_analyze_jobs_verifies_each_posting_against_its_own_text():
+    from vouch.jobs.requirements import analyze_jobs
+
+    # One analysis quoting "Python" is returned for both postings; only one of them says it.
+    analysis = _analysis([_req("Python", ["Python"])]).model_copy(update={"keywords": ["Python"]})
+    analysis.requirements[0].quote = "Python"
+    postings = [("a", "SDE", "We use Python and Go."), ("b", "SRE", "We use Terraform.")]
+    llm = FakeLLM(batch_responder(analysis))
+
+    results = analyze_jobs(postings, llm)
+
+    assert len(llm.prompts) == 1  # one request for both
+    assert results["a"].unverified_requirements == []
+    # Borrowed from the other posting -> flagged, and the keyword is dropped.
+    assert results["b"].unverified_requirements == ["Python"]
+    assert results["b"].dropped_keywords == ["Python"]
+
+
+def test_analyze_jobs_leaves_out_postings_the_model_skipped():
+    from vouch.jobs.requirements import analyze_jobs
+
+    llm = FakeLLM(batch_responder(_analysis([]), skip={"b"}))
+    results = analyze_jobs([("a", None, "x"), ("b", None, "y")], llm)
+    assert set(results) == {"a"}
+
+
+def test_discovery_batches_extraction_requests(session):
+    profile = load_profile(EXAMPLE)
+    jobs = {
+        "jobs": [
+            {
+                "id": i,
+                "title": f"Backend Engineer {i}",
+                "location": {"name": "Bengaluru"},
+                "content": f"&lt;p&gt;Posting {i}: Python&lt;/p&gt;",
+                "absolute_url": f"https://x/batch-{i}",
+            }
+            for i in range(14)
+        ]
+    }
+    config = SearchConfig(
+        companies=[Company(name="Acme", ats="greenhouse", board="acme")],
+        filters=FILTERS.model_copy(update={"max_age_days": None}),
+    )
+    config.ranking.batch_size = 6
+    llm = FakeLLM(batch_responder(_analysis([_req("Python", ["Python"])])))
+    settings = Settings(llm_provider="fake")
+
+    result = discover(
+        session,
+        config,
+        profile,
+        llm,
+        settings,
+        client=_mock_client({GH_URL: jobs}),
+        now=NOW,
+        analyze=1000,
+    )
+    ours = {j.id for j in session.scalars(select(Job).where(Job.url.like("https://x/batch-%")))}
+    assert ours <= set(result.analyzed)
+    # 14 postings of ours (plus whatever else is pending in the real DB), 6 per request.
+    assert result.requests == len(llm.prompts) == -(-len(result.analyzed) // 6)
+    assert all(
+        j.analysis_model == settings.extraction_model
+        for j in session.scalars(select(Job).where(Job.id.in_(ours)))
+    )
+
+
 # --- a whole run against the database ------------------------------------------------------------
 
 
@@ -197,7 +284,7 @@ def test_discover_run(session):
         filters=FILTERS.model_copy(update={"max_age_days": None}),
     )
     analysis = _analysis([_req("Backend language", ["Python"]), _req("Go", ["Go"])])
-    llm = FakeLLM(lambda prompt, schema: analysis)
+    llm = FakeLLM(batch_responder(analysis))
     settings = Settings(llm_provider="fake", llm_model="fake-model")
     client = _mock_client({GH_URL: GREENHOUSE})
 
