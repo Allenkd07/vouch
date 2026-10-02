@@ -16,27 +16,22 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session, sessionmaker
 
 from vouch.applications import repository as applications_db
+from vouch.applications import service as application_service
+from vouch.applications.service import STATUSES
 from vouch.boards import FetchError
 from vouch.config import get_settings
 from vouch.db import Job, ResumeVersion, get_sessionmaker
 from vouch.discovery import repository as matches_db
 from vouch.discovery.config import DEFAULT_SEARCH, load_search
 from vouch.discovery.queries import skill_gaps
-from vouch.discovery.run import discover, rescore_job
+from vouch.discovery.run import discover
 from vouch.jobs import repository as jobs_db
-from vouch.jobs.requirements import analyze_job
+from vouch.jobs import service as job_service
+from vouch.jobs.service import job_analysis
 from vouch.llm import LLMError, get_extraction_llm, get_llm
 from vouch.profile.schema import lint, load_profile
-from vouch.services import (
-    STATUSES,
-    add_job,
-    approve_version,
-    create_version,
-    job_analysis,
-    save_edits,
-    set_status,
-)
 from vouch.tailoring import repository as versions_db
+from vouch.tailoring import service as tailoring_service
 from vouch.tailoring.document import ResumeDoc
 from vouch.tailoring.pipeline import TailorReport
 from vouch.web import browse as browsing
@@ -84,6 +79,9 @@ def create_app(
     def page(request: Request, name: str, **context) -> HTMLResponse:
         return templates.TemplateResponse(request, name, context)
 
+    def scoring() -> job_service.Scoring | None:
+        return job_service.load_scoring(profile_path, search_path)
+
     def coverage_counts(version: ResumeVersion | None) -> dict | None:
         if version is None:
             return None
@@ -128,7 +126,7 @@ def create_app(
         settings = get_settings()
         form = {"url": url, "text": text, "company": company, "title": title}
         try:
-            job, _ = add_job(
+            job, _ = job_service.add_job(
                 session,
                 get_extraction_llm(settings),
                 settings,
@@ -136,11 +134,10 @@ def create_app(
                 text=text.strip() or None,
                 company=company.strip() or None,
                 title=title.strip() or None,
+                scoring=scoring(),
             )
         except (FetchError, LLMError, ValueError) as e:
-            session.rollback()
             return jobs_page(request, session, error=str(e), form=form)
-        session.commit()
         return RedirectResponse(f"/jobs/{job.id}", status_code=303)
 
     @app.get("/jobs/{job_id}")
@@ -170,20 +167,11 @@ def create_app(
         settings = get_settings()
         inline = request.headers.get("HX-Request") == "true"  # the button on a list row
         try:
-            result = analyze_job(job.description, get_extraction_llm(settings), title=job.title)
+            job_service.analyze(session, job, get_extraction_llm(settings), settings, scoring())
         except LLMError as e:
             if inline:
                 return page(request, "_job_row.html", row=_row_for(session, job), error=str(e))
             return job_detail(job_id, request, session, error=str(e))
-        jobs_db.save_analysis(job, result, settings.extraction_model)
-        try:
-            years = (
-                load_search(search_path).ranking.accept_years_up_to if search_path.exists() else 5
-            )
-            rescore_job(session, job, load_profile(profile_path), accept_years_up_to=years)
-        except (OSError, ValidationError):
-            pass  # the score appears after the next discovery run instead
-        session.commit()
         if inline:
             return page(request, "_job_row.html", row=_row_for(session, job))
         return RedirectResponse(f"/jobs/{job_id}", status_code=303)
@@ -199,8 +187,7 @@ def create_app(
         session: Session = Depends(get_session),
     ):
         jobs_db.get(session, job_id) or _not_found()
-        app_row = set_status(session, job_id, status or None)
-        session.commit()
+        app_row = application_service.set_status(session, job_id, status or None)
         return page(request, "_status.html", job_id=job_id, app=app_row, saved=True)
 
     # --- tailoring --------------------------------------------------------------------------
@@ -211,8 +198,9 @@ def create_app(
             profile = load_profile(profile_path)
             with (make_session or get_sessionmaker())() as session:
                 job = jobs_db.get(session, job_id)
-                version = create_version(session, job, profile, get_llm(settings), settings)
-                session.commit()
+                version = tailoring_service.create_version(
+                    session, job, profile, get_llm(settings), settings
+                )
                 runs[job_id] = TailorRun("done", version_id=version.id)
         except (LLMError, ValidationError, ValueError, OSError) as e:
             runs[job_id] = TailorRun("error", message=str(e))
@@ -269,15 +257,13 @@ def create_app(
         version = versions_db.get(session, version_id) or _not_found()
         form = await request.form()
         doc = apply_form(ResumeDoc.model_validate(version.content), form)
-        save_edits(session, version, doc)
-        session.commit()
+        tailoring_service.save_edits(session, version, doc)
         return RedirectResponse(f"/versions/{version_id}?done=saved", status_code=303)
 
     @app.post("/versions/{version_id}/approve")
     def version_approve(version_id: int, session: Session = Depends(get_session)):
         version = versions_db.get(session, version_id) or _not_found()
-        approve_version(session, version)
-        session.commit()
+        tailoring_service.approve_version(session, version)
         return RedirectResponse(f"/versions/{version_id}?done=approved", status_code=303)
 
     @app.get("/versions/{version_id}/{kind}")
@@ -360,9 +346,7 @@ def create_app(
     def application_notes(
         job_id: int, notes: str = Form(""), session: Session = Depends(get_session)
     ):
-        app_row = applications_db.for_job(session, job_id) or _not_found()
-        app_row.notes = notes
-        session.commit()
+        application_service.set_notes(session, job_id, notes) or _not_found()
         return HTMLResponse('<span class="saved" role="status">Saved</span>')
 
     @app.get("/profile")

@@ -48,7 +48,7 @@ class Params:
     q: str = ""
     company: str = ""
     city: str = ""
-    status: str = ""  # "" any, "none" not tracking, or a services.STATUSES value
+    status: str = ""  # "" any, "none" not tracking, or an applications.service.STATUSES value
     fit: str = ""
     sort: str = "fit"
 

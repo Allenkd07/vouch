@@ -17,6 +17,7 @@ job_app = typer.Typer(no_args_is_help=True, help="Jobs: add from a link, list, s
 app.add_typer(job_app, name="job")
 
 DEFAULT_PROFILE = Path("profile/profile.yaml")
+DEFAULT_SEARCH = Path("profile/search.yaml")
 ProfilePath = Annotated[Path, typer.Argument(exists=True)]
 
 
@@ -139,12 +140,14 @@ def job_add(
     company: Annotated[str | None, typer.Option(help="Override company name")] = None,
     title: Annotated[str | None, typer.Option(help="Override job title")] = None,
     reanalyze: Annotated[bool, typer.Option(help="Re-run extraction even if unchanged")] = False,
+    profile_path: Annotated[Path, typer.Option("--profile")] = DEFAULT_PROFILE,
+    search_path: Annotated[Path, typer.Option("--search")] = DEFAULT_SEARCH,
 ) -> None:
-    """Fetch a job (or read pasted text), store it, and extract its requirements."""
+    """Fetch a job (or read pasted text), store it, extract its requirements and score its fit."""
     from vouch.boards import FetchError
     from vouch.db import get_sessionmaker
+    from vouch.jobs.service import add_job, load_scoring
     from vouch.llm import get_extraction_llm
-    from vouch.services import add_job
 
     if not url and not text_file:
         raise typer.BadParameter("give a job URL, or --text-file with the pasted description")
@@ -160,11 +163,11 @@ def job_add(
                 company=company,
                 title=title,
                 reanalyze=reanalyze,
+                scoring=load_scoring(profile_path, search_path),
             )
         except FetchError as e:
             typer.echo(str(e), err=True)
             raise typer.Exit(1) from e
-        session.commit()
         state = "new/changed" if changed else "unchanged"
         typer.echo(f"Job {job.id}: {job.title} @ {job.company} ({state})")
         _print_job(job)
@@ -245,10 +248,11 @@ def tailor_cmd(
 
     from vouch.db import get_sessionmaker
     from vouch.jobs import repository as jobs_db
+    from vouch.jobs.service import job_analysis
     from vouch.llm import get_llm
-    from vouch.services import create_version, job_analysis
     from vouch.tailoring.document import ResumeDoc
     from vouch.tailoring.pipeline import TailorReport
+    from vouch.tailoring.service import create_version
 
     settings = get_settings()
     profile = _load(profile_path)
@@ -262,7 +266,6 @@ def tailor_cmd(
         version = create_version(
             session, job, profile, get_llm(settings), settings, pages=pages, out=out
         )
-        session.commit()
 
     r = TailorReport.model_validate(version.report)
     doc = ResumeDoc.model_validate(version.content)
@@ -301,9 +304,6 @@ def main() -> None:
     except LLMError as e:
         typer.echo(f"Error: {e}", err=True)
         raise SystemExit(1) from e
-
-
-DEFAULT_SEARCH = Path("profile/search.yaml")
 
 
 @app.command("discover")

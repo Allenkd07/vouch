@@ -173,7 +173,7 @@ def test_tailor_button_runs_and_redirects_to_new_version(client, db, seeded, mon
 
     monkeypatch.setattr(web, "get_llm", lambda settings: None)
     monkeypatch.setattr(
-        web,
+        web.tailoring_service,
         "create_version",
         lambda session, job, profile, llm, settings: session.get(ResumeVersion, version_id),
     )
@@ -211,7 +211,7 @@ def test_background_failure_is_reported_not_swallowed(client, seeded, monkeypatc
             self.target(*self.args)
 
     monkeypatch.setattr(web, "get_llm", lambda settings: None)
-    monkeypatch.setattr(web, "create_version", boom)
+    monkeypatch.setattr(web.tailoring_service, "create_version", boom)
     monkeypatch.setattr(web.threading, "Thread", InlineThread)
     client.post(f"/jobs/{job_id}/tailor")
     page = client.get(f"/jobs/{job_id}/tailor")

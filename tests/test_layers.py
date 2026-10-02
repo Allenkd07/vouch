@@ -5,10 +5,10 @@ from pathlib import Path
 
 SRC = Path(__file__).parent.parent / "src" / "vouch"
 # `vouch db check` runs raw SQL on purpose (server version, pgvector, migration); it reads no data.
-QUERY = re.compile(r"\bselect\(|\bsession\.(get|scalars?|execute|add|delete)\(")
+QUERY = re.compile(r"\bselect\(|\bsession\.(get|scalars?|execute|add|delete|commit|rollback)\(")
 
 
-def test_web_and_cli_do_not_query_the_database():
+def test_web_and_cli_neither_query_nor_commit():
     files = [*(SRC / "web").glob("*.py"), SRC / "cli.py"]
     offenders = [
         f"{f.relative_to(SRC)}:{n}: {line.strip()}"
