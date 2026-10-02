@@ -8,9 +8,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from vouch.bootstrap import build
 from vouch.config import get_settings
 from vouch.db import Application, Job, ResumeVersion
 from vouch.jobs.requirements import VerifiedAnalysis
+from vouch.llm import FakeLLM
 from vouch.profile.schema import load_profile
 from vouch.profile.sync import sync_profile
 from vouch.tailoring.document import ResumeDoc
@@ -73,7 +75,8 @@ def seeded(db, tmp_path):
 
 @pytest.fixture
 def client(db):
-    return TestClient(create_app(make_session=db, profile_path=EXAMPLE))
+    deps = build(sessions=db, llm_factory=lambda role: FakeLLM(), profile_path=EXAMPLE)
+    return TestClient(create_app(deps))
 
 
 def test_jobs_page_and_status_tracking(client, seeded):
@@ -171,7 +174,6 @@ def test_tailor_button_runs_and_redirects_to_new_version(client, db, seeded, mon
     page = client.get(f"/jobs/{job_id}")
     assert f'hx-post="/jobs/{job_id}/tailor"' in page.text  # regression: was "/jobs//tailor"
 
-    monkeypatch.setattr(web, "get_llm", lambda settings: None)
     monkeypatch.setattr(
         web.tailoring_service,
         "create_version",
@@ -210,7 +212,6 @@ def test_background_failure_is_reported_not_swallowed(client, seeded, monkeypatc
         def start(self):
             self.target(*self.args)
 
-    monkeypatch.setattr(web, "get_llm", lambda settings: None)
     monkeypatch.setattr(web.tailoring_service, "create_version", boom)
     monkeypatch.setattr(web.threading, "Thread", InlineThread)
     client.post(f"/jobs/{job_id}/tailor")

@@ -12,6 +12,7 @@ from typing import Annotated
 import yaml
 from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
+DEFAULT_PROFILE = Path("profile/profile.yaml")
 ID_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
 
 # YAML reads `2024` as an int and `2024-01-15` as a date; keep dates as the text written.

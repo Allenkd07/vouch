@@ -13,23 +13,22 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from vouch.applications import repository as applications_db
 from vouch.applications import service as application_service
 from vouch.applications.service import STATUSES
 from vouch.boards import FetchError
-from vouch.config import get_settings
-from vouch.db import Job, ResumeVersion, get_sessionmaker
+from vouch.bootstrap import Deps, build
+from vouch.db import Job, ResumeVersion
 from vouch.discovery import repository as matches_db
-from vouch.discovery.config import DEFAULT_SEARCH, load_search
 from vouch.discovery.queries import skill_gaps
 from vouch.discovery.run import discover
 from vouch.jobs import repository as jobs_db
 from vouch.jobs import service as job_service
 from vouch.jobs.service import job_analysis
-from vouch.llm import LLMError, get_extraction_llm, get_llm
-from vouch.profile.schema import lint, load_profile
+from vouch.llm import LLMError
+from vouch.profile.schema import lint
 from vouch.tailoring import repository as versions_db
 from vouch.tailoring import service as tailoring_service
 from vouch.tailoring.document import ResumeDoc
@@ -39,7 +38,6 @@ from vouch.web.diff import highlight_changes
 
 HERE = Path(__file__).parent
 log = logging.getLogger(__name__)
-DEFAULT_PROFILE = Path("profile/profile.yaml")
 
 
 @dataclass
@@ -49,11 +47,7 @@ class TailorRun:
     version_id: int | None = None
 
 
-def create_app(
-    make_session: sessionmaker | None = None,
-    profile_path: Path = DEFAULT_PROFILE,
-    search_path: Path = DEFAULT_SEARCH,
-) -> FastAPI:
+def create_app(deps: Deps) -> FastAPI:
     app = FastAPI(title="Vouch")
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
@@ -71,16 +65,13 @@ def create_app(
     discovery: dict[str, TailorRun] = {}  # single entry under "run"
 
     def get_session() -> Iterator[Session]:
-        with (make_session or get_sessionmaker())() as session:
+        with deps.sessions() as session:
             yield session
 
     app.state.get_session = get_session
 
     def page(request: Request, name: str, **context) -> HTMLResponse:
         return templates.TemplateResponse(request, name, context)
-
-    def scoring() -> job_service.Scoring | None:
-        return job_service.load_scoring(profile_path, search_path)
 
     def coverage_counts(version: ResumeVersion | None) -> dict | None:
         if version is None:
@@ -123,18 +114,17 @@ def create_app(
         title: str = Form(""),
         session: Session = Depends(get_session),
     ):
-        settings = get_settings()
         form = {"url": url, "text": text, "company": company, "title": title}
         try:
             job, _ = job_service.add_job(
                 session,
-                get_extraction_llm(settings),
-                settings,
+                deps.llm("extraction"),
+                deps.settings,
                 url=url.strip() or None,
                 text=text.strip() or None,
                 company=company.strip() or None,
                 title=title.strip() or None,
-                scoring=scoring(),
+                scoring=deps.scoring(),
             )
         except (FetchError, LLMError, ValueError) as e:
             return jobs_page(request, session, error=str(e), form=form)
@@ -164,10 +154,9 @@ def create_app(
     @app.post("/jobs/{job_id}/analyze")
     def job_analyze(job_id: int, request: Request, session: Session = Depends(get_session)):
         job = jobs_db.get(session, job_id) or _not_found()
-        settings = get_settings()
         inline = request.headers.get("HX-Request") == "true"  # the button on a list row
         try:
-            job_service.analyze(session, job, get_extraction_llm(settings), settings, scoring())
+            job_service.analyze(session, job, deps.llm("extraction"), deps.settings, deps.scoring())
         except LLMError as e:
             if inline:
                 return page(request, "_job_row.html", row=_row_for(session, job), error=str(e))
@@ -193,13 +182,12 @@ def create_app(
     # --- tailoring --------------------------------------------------------------------------
 
     def run_tailor(job_id: int) -> None:
-        settings = get_settings()
         try:
-            profile = load_profile(profile_path)
-            with (make_session or get_sessionmaker())() as session:
+            profile = deps.profile()
+            with deps.sessions() as session:
                 job = jobs_db.get(session, job_id)
                 version = tailoring_service.create_version(
-                    session, job, profile, get_llm(settings), settings
+                    session, job, profile, deps.llm("tailoring"), deps.settings
                 )
                 runs[job_id] = TailorRun("done", version_id=version.id)
         except (LLMError, ValidationError, ValueError, OSError) as e:
@@ -295,16 +283,14 @@ def create_app(
             b=browsing.browse(rows, params),
             gaps=skill_gaps([(r.job, r.match, r.app) for r in ranked]),
             run=discovery.get("run"),
-            has_search=search_path.exists(),
+            has_search=deps.search_path.exists(),
         )
 
     def run_discovery() -> None:
-        settings = get_settings()
         try:
-            config = load_search(search_path)
-            profile = load_profile(profile_path)
-            with (make_session or get_sessionmaker())() as session:
-                result = discover(session, config, profile, get_extraction_llm(settings), settings)
+            config, profile = deps.search(), deps.profile()
+            with deps.sessions() as session:
+                result = discover(session, config, profile, deps.llm("extraction"), deps.settings)
             kept = sum(len(c.kept) for c in result.companies)
             failed = [c.name for c in result.companies if c.error]
             message = (
@@ -352,7 +338,7 @@ def create_app(
     @app.get("/profile")
     def profile_view(request: Request):
         try:
-            profile = load_profile(profile_path)
+            profile = deps.profile()
         except (OSError, ValidationError) as e:
             return page(request, "profile.html", profile=None, warnings=[], error=str(e))
         return page(request, "profile.html", profile=profile, warnings=lint(profile), error="")
@@ -388,4 +374,4 @@ def _not_found():
     raise HTTPException(404, "Not found")
 
 
-app = create_app()
+app = create_app(build())

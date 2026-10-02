@@ -4,7 +4,8 @@ from typing import Annotated
 import typer
 from pydantic import BaseModel, ValidationError
 
-from vouch.config import get_settings
+from vouch.discovery.config import DEFAULT_SEARCH
+from vouch.profile.schema import DEFAULT_PROFILE
 
 app = typer.Typer(no_args_is_help=True, help="Vouch: truthful, tailored resumes")
 db_app = typer.Typer(no_args_is_help=True, help="Database checks")
@@ -16,9 +17,14 @@ app.add_typer(profile_app, name="profile")
 job_app = typer.Typer(no_args_is_help=True, help="Jobs: add from a link, list, show")
 app.add_typer(job_app, name="job")
 
-DEFAULT_PROFILE = Path("profile/profile.yaml")
-DEFAULT_SEARCH = Path("profile/search.yaml")
 ProfilePath = Annotated[Path, typer.Argument(exists=True)]
+
+
+def _deps(profile_path: Path = DEFAULT_PROFILE, search_path: Path = DEFAULT_SEARCH):
+    """Settings, database sessions and LLMs for one command (see vouch.bootstrap)."""
+    from vouch.bootstrap import build
+
+    return build(profile_path=profile_path, search_path=search_path)
 
 
 @db_app.command("check")
@@ -38,15 +44,15 @@ def db_check() -> None:
 @llm_app.command("check")
 def llm_check() -> None:
     """One structured generation and one embedding against the configured provider."""
-    from vouch.llm import get_extraction_llm, get_llm
 
     class Ping(BaseModel):
         answer: str
 
-    settings = get_settings()
-    llm = get_llm(settings)
+    deps = _deps()
+    settings = deps.settings
+    llm = deps.llm("tailoring")
     reply = llm.generate_json("Reply with answer='pong'.", Ping)
-    extraction = get_extraction_llm(settings).generate_json("Reply with answer='pong'.", Ping)
+    extraction = deps.llm("extraction").generate_json("Reply with answer='pong'.", Ping)
     vector = llm.embed(["senior backend engineer, Python, PostgreSQL"])[0]
     typer.echo(f"{settings.llm_model} (tailoring): {reply.answer!r}")
     typer.echo(f"{settings.extraction_model} (requirements): {extraction.answer!r}")
@@ -62,13 +68,12 @@ def profile_bootstrap(
     force: Annotated[bool, typer.Option(help="Overwrite an existing profile")] = False,
 ) -> None:
     """Draft profile.yaml from existing resumes. Review every line before using it."""
-    from vouch.llm import get_llm
     from vouch.profile.bootstrap import bootstrap_profile
     from vouch.profile.schema import dump_profile, lint
 
     if out.exists() and not force:
         raise typer.BadParameter(f"{out} exists; pass --force to overwrite", param_hint="--out")
-    profile = bootstrap_profile(files, get_llm())
+    profile = bootstrap_profile(files, _deps().llm("tailoring"))
     header = (
         "# DRAFT generated from: " + ", ".join(f.name for f in files) + "\n"
         "# Review every bullet: fix wording, fill in facts (tools/metrics/scope),\n"
@@ -101,11 +106,10 @@ def profile_validate(path: ProfilePath = DEFAULT_PROFILE) -> None:
 @profile_app.command("sync")
 def profile_sync(path: ProfilePath = DEFAULT_PROFILE) -> None:
     """Store the profile in the database (snapshot + one row per bullet)."""
-    from vouch.db import get_sessionmaker
     from vouch.profile.sync import sync_profile
 
     profile = _load(path)
-    with get_sessionmaker()() as session:
+    with _deps().sessions() as session:
         result = sync_profile(session, profile)
     state = "new snapshot" if result.new_snapshot else "unchanged"
     typer.echo(
@@ -145,25 +149,23 @@ def job_add(
 ) -> None:
     """Fetch a job (or read pasted text), store it, extract its requirements and score its fit."""
     from vouch.boards import FetchError
-    from vouch.db import get_sessionmaker
-    from vouch.jobs.service import add_job, load_scoring
-    from vouch.llm import get_extraction_llm
+    from vouch.jobs.service import add_job
 
     if not url and not text_file:
         raise typer.BadParameter("give a job URL, or --text-file with the pasted description")
-    settings = get_settings()
-    with get_sessionmaker()() as session:
+    deps = _deps(profile_path, search_path)
+    with deps.sessions() as session:
         try:
             job, changed = add_job(
                 session,
-                get_extraction_llm(settings),
-                settings,
+                deps.llm("extraction"),
+                deps.settings,
                 url=url,
                 text=text_file.read_text(encoding="utf-8") if text_file else None,
                 company=company,
                 title=title,
                 reanalyze=reanalyze,
-                scoring=load_scoring(profile_path, search_path),
+                scoring=deps.scoring(),
             )
         except FetchError as e:
             typer.echo(str(e), err=True)
@@ -176,10 +178,9 @@ def job_add(
 @job_app.command("list")
 def job_list(limit: int = 20) -> None:
     """Most recently fetched jobs."""
-    from vouch.db import get_sessionmaker
     from vouch.jobs import repository as jobs_db
 
-    with get_sessionmaker()() as session:
+    with _deps().sessions() as session:
         jobs = jobs_db.recent(session, limit)
     for j in jobs:
         typer.echo(f"{j.id:>4}  {j.fetched_at:%Y-%m-%d}  {j.company or '?'} | {j.title or '?'}")
@@ -188,10 +189,9 @@ def job_list(limit: int = 20) -> None:
 @job_app.command("show")
 def job_show(job_id: int, description: bool = False) -> None:
     """Requirements for one job (--description to include the full posting)."""
-    from vouch.db import get_sessionmaker
     from vouch.jobs import repository as jobs_db
 
-    with get_sessionmaker()() as session:
+    with _deps().sessions() as session:
         job = jobs_db.get(session, job_id)
     if job is None:
         typer.echo(f"no job {job_id}", err=True)
@@ -245,18 +245,16 @@ def tailor_cmd(
     out: Annotated[Path, typer.Option(help="Output folder")] = Path("output"),
 ) -> None:
     """Build a tailored, verified resume (PDF + DOCX + report) for a stored job."""
-
-    from vouch.db import get_sessionmaker
     from vouch.jobs import repository as jobs_db
     from vouch.jobs.service import job_analysis
-    from vouch.llm import get_llm
     from vouch.tailoring.document import ResumeDoc
     from vouch.tailoring.pipeline import TailorReport
     from vouch.tailoring.service import create_version
 
-    settings = get_settings()
+    deps = _deps(profile_path)
+    settings = deps.settings
     profile = _load(profile_path)
-    with get_sessionmaker()() as session:
+    with deps.sessions() as session:
         job = jobs_db.get(session, job_id)
         analysis = job_analysis(job) if job else None
         if analysis is None:
@@ -264,7 +262,7 @@ def tailor_cmd(
             raise typer.Exit(1)
         typer.echo(f"Tailoring for {job.title} @ {job.company} with {settings.llm_model}...")
         version = create_version(
-            session, job, profile, get_llm(settings), settings, pages=pages, out=out
+            session, job, profile, deps.llm("tailoring"), settings, pages=pages, out=out
         )
 
     r = TailorReport.model_validate(version.report)
@@ -318,10 +316,8 @@ def discover_cmd(
     profile_path: Annotated[Path, typer.Option("--profile", exists=True)] = DEFAULT_PROFILE,
 ) -> None:
     """Fetch jobs from your target companies, keep the ones that fit your filters, and rank them."""
-    from vouch.db import get_sessionmaker
     from vouch.discovery.config import load_search
     from vouch.discovery.run import discover, fetch_all
-    from vouch.llm import get_extraction_llm
 
     config = load_search(search_path)
     if check:
@@ -332,15 +328,15 @@ def discover_cmd(
                 typer.echo(f"{'':<18}{job.title} | {job.location}")
         return
 
-    settings = get_settings()
+    deps = _deps(profile_path, search_path)
     profile = _load(profile_path)
-    with get_sessionmaker()() as session:
+    with deps.sessions() as session:
         result = discover(
             session,
             config,
             profile,
-            get_extraction_llm(settings),
-            settings,
+            deps.llm("extraction"),
+            deps.settings,
             analyze=analyze,
             log=typer.echo,
         )
@@ -359,10 +355,9 @@ def discover_cmd(
 @app.command("matches")
 def matches_cmd(limit: int = 20) -> None:
     """Jobs ranked by estimated fit (score needs extracted requirements; others by similarity)."""
-    from vouch.db import get_sessionmaker
     from vouch.discovery.queries import ranked_matches, skill_gaps
 
-    with get_sessionmaker()() as session:
+    with _deps().sessions() as session:
         rows = ranked_matches(session, limit=limit)
         for job, match, app in rows:
             score = f"{match.score:5.1f}" if match.score is not None else "    -"

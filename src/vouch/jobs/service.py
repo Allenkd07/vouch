@@ -53,7 +53,7 @@ def add_job(
     scoring: Scoring | None = None,
 ) -> tuple[Job, bool]:
     """Fetch (or take pasted text), store, read requirements and score a job.
-    Returns (job, changed). `llm` should be the extraction LLM (llm.get_extraction_llm).
+    Returns (job, changed). `llm` should be the extraction LLM (`deps.llm("extraction")`).
     Raises FetchError, LLMError or ValueError, and then stores nothing."""
     if not url and not text:
         raise ValueError("give a job link or paste the job description")

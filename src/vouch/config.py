@@ -3,6 +3,9 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# What an LLM is used for; each role can run on a different model.
+Role = Literal["tailoring", "extraction"]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -17,7 +20,11 @@ class Settings(BaseSettings):
     extraction_model: str = "gemini-3.5-flash-lite"
     embedding_model: str = "gemini-embedding-2"
 
+    def model_for(self, role: Role) -> str:
+        return {"tailoring": self.llm_model, "extraction": self.extraction_model}[role]
+
 
 @lru_cache
 def get_settings() -> Settings:
+    """Settings from the environment and .env. Call only from vouch.bootstrap (and db.py)."""
     return Settings()

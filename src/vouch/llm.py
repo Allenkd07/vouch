@@ -6,7 +6,7 @@ from typing import Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from vouch.config import Settings, get_settings
+from vouch.config import Role, Settings
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -55,7 +55,7 @@ class GeminiLLM:
     One retry feeds the validation error back to the model.
     """
 
-    def __init__(self, settings: Settings, model: str | None = None):
+    def __init__(self, settings: Settings, model: str):
         if not settings.gemini_api_key:
             raise LLMError("GEMINI_API_KEY is not set (see .env.example)")
         from google import genai
@@ -67,7 +67,7 @@ class GeminiLLM:
             api_key=settings.gemini_api_key,
             http_options=genai.types.HttpOptions(retry_options=retry),
         )
-        self._model = model or settings.llm_model
+        self._model = model
         self._embedding_model = settings.embedding_model
 
     def generate_json(self, prompt: str, schema: type[T], *, system: str | None = None) -> T:
@@ -148,15 +148,13 @@ class FakeLLM:
         return out
 
 
-def get_llm(settings: Settings | None = None, model: str | None = None) -> LLM:
-    """The LLM for `model` (default: settings.llm_model, used for tailoring)."""
-    settings = settings or get_settings()
-    if settings.llm_provider == "fake":
-        return FakeLLM()
-    return GeminiLLM(settings, model)
+# Settings.llm_provider -> how to build that provider's LLM for a model.
+PROVIDERS: dict[str, Callable[[Settings, str], LLM]] = {
+    "gemini": GeminiLLM,
+    "fake": lambda settings, model: FakeLLM(),
+}
 
 
-def get_extraction_llm(settings: Settings | None = None) -> LLM:
-    """The LLM for reading job requirements (settings.extraction_model)."""
-    settings = settings or get_settings()
-    return get_llm(settings, settings.extraction_model)
+def get_llm(settings: Settings, role: Role) -> LLM:
+    """The configured provider's LLM, on the model chosen for `role`."""
+    return PROVIDERS[settings.llm_provider](settings, settings.model_for(role))
