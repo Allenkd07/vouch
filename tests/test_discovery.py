@@ -6,15 +6,14 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from vouch.boards import FetchedJob, list_jobs
 from vouch.config import Settings
 from vouch.db import Job
-from vouch.discovery.boards import list_jobs
 from vouch.discovery.config import Company, Filters, SearchConfig
 from vouch.discovery.filters import rejection_reason
 from vouch.discovery.fit import score_fit, years_of_experience
 from vouch.discovery.run import discover, ranked_matches, skill_gaps
 from vouch.jobs.requirements import JobAnalysis, Requirement
-from vouch.jobs.sources import FetchedJob
 from vouch.llm import FakeLLM
 from vouch.profile.schema import load_profile
 

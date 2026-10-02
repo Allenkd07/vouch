@@ -7,10 +7,10 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from vouch.boards import FetchedJob, fetch_job, manual_job
 from vouch.config import Settings
 from vouch.db import Application, Job, ResumeVersion
 from vouch.jobs.requirements import JobAnalysis, VerifiedAnalysis, analyze_job, quote_in_text
-from vouch.jobs.sources import FetchedJob, fetch_job, manual_job
 from vouch.jobs.store import needs_analysis, save_analysis, upsert_job
 from vouch.llm import LLM
 from vouch.profile.schema import Profile

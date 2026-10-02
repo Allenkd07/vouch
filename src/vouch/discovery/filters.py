@@ -3,8 +3,8 @@
 import re
 from datetime import UTC, datetime
 
+from vouch.boards import FetchedJob
 from vouch.discovery.config import Filters
-from vouch.jobs.sources import FetchedJob
 
 
 def has_phrase(text: str, phrases: list[str]) -> str | None:

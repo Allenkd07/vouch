@@ -15,14 +15,13 @@ from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from vouch.boards import BOARDS, FetchedJob, list_jobs, new_client
 from vouch.config import Settings
 from vouch.db import Application, Job, JobEmbedding, Match
-from vouch.discovery.boards import list_jobs, workday_details
 from vouch.discovery.config import Company, SearchConfig
 from vouch.discovery.filters import rejection_reason
 from vouch.discovery.fit import Fit, score_fit
 from vouch.jobs.requirements import VerifiedAnalysis, analyze_jobs
-from vouch.jobs.sources import USER_AGENT, FetchedJob
 from vouch.jobs.store import needs_analysis, save_analysis, upsert_job
 from vouch.llm import LLM, LLMError
 from vouch.profile.schema import Profile
@@ -56,8 +55,9 @@ def fetch_company(company: Company, config: SearchConfig, client: httpx.Client) 
         jobs = list_jobs(company, client)
         result.listed = len(jobs)
         kept = [j for j in jobs if rejection_reason(j, config.filters) is None]
-        if company.ats == "workday":
-            kept = [workday_details(j, company, client) for j in kept]
+        board = BOARDS[company.ats]
+        if board.partial_listing:  # descriptions come from a second request per posting
+            kept = [board.details(j, company, client) for j in kept]
             kept = [j for j in kept if rejection_reason(j, config.filters) is None]
         result.kept = kept
     except (httpx.HTTPError, KeyError, ValueError) as e:
@@ -66,9 +66,7 @@ def fetch_company(company: Company, config: SearchConfig, client: httpx.Client) 
 
 
 def fetch_all(config: SearchConfig, client: httpx.Client | None = None) -> list[CompanyResult]:
-    client = client or httpx.Client(
-        timeout=30, follow_redirects=True, headers={"User-Agent": USER_AGENT}
-    )
+    client = client or new_client()
     with ThreadPoolExecutor(max_workers=8) as pool:
         return list(pool.map(lambda c: fetch_company(c, config, client), config.companies))
 

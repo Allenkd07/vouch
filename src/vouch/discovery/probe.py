@@ -9,12 +9,9 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from vouch.discovery.boards import list_jobs
-from vouch.discovery.config import Company
+from vouch.boards import BOARDS, Company, list_jobs, new_client
 from vouch.discovery.filters import has_phrase
-from vouch.jobs.sources import USER_AGENT
 
-BOARDS = ("greenhouse", "lever", "ashby")
 INDIA = [
     "india",
     "bengaluru",
@@ -72,10 +69,9 @@ def _try(name: str, ats: str, slug: str, client: httpx.Client) -> Found | None:
 
 def probe(names: list[str], client: httpx.Client | None = None, workers: int = 16) -> list[Found]:
     """Every board found for each name (best first: most India openings)."""
-    client = client or httpx.Client(
-        timeout=20, follow_redirects=True, headers={"User-Agent": USER_AGENT}
-    )
-    attempts = [(n, ats, slug) for n in names for slug in slug_variants(n) for ats in BOARDS]
+    client = client or new_client(timeout=20)
+    boards = [name for name, board in BOARDS.items() if board.probeable]
+    attempts = [(n, ats, slug) for n in names for slug in slug_variants(n) for ats in boards]
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results = pool.map(lambda a: _try(*a, client), attempts)
     found = [r for r in results if r is not None]

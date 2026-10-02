@@ -5,9 +5,9 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from vouch.boards import FetchedJob
 from vouch.db import Job
 from vouch.jobs.requirements import VerifiedAnalysis
-from vouch.jobs.sources import FetchedJob
 
 
 def content_hash(description: str) -> str:

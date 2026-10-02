@@ -1,28 +1,13 @@
 """profile/search.yaml: which companies to watch and which jobs to keep."""
 
 from pathlib import Path
-from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
+
+from vouch.boards import Company
 
 DEFAULT_SEARCH = Path("profile/search.yaml")
-
-
-class Company(BaseModel):
-    name: str
-    ats: Literal["greenhouse", "lever", "ashby", "workday"]
-    board: str | None = Field(default=None, description="Board slug (greenhouse/lever/ashby)")
-    url: str | None = Field(default=None, description="Careers site URL (workday)")
-    search: str = Field(default="", description="Search text for workday's job list")
-
-    @model_validator(mode="after")
-    def _needs_location(self) -> "Company":
-        if self.ats == "workday" and not self.url:
-            raise ValueError(f"{self.name}: workday companies need `url`")
-        if self.ats != "workday" and not self.board:
-            raise ValueError(f"{self.name}: {self.ats} companies need `board`")
-        return self
 
 
 class Filters(BaseModel):

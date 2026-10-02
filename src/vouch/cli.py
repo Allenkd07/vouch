@@ -141,8 +141,8 @@ def job_add(
     reanalyze: Annotated[bool, typer.Option(help="Re-run extraction even if unchanged")] = False,
 ) -> None:
     """Fetch a job (or read pasted text), store it, and extract its requirements."""
+    from vouch.boards import FetchError
     from vouch.db import get_sessionmaker
-    from vouch.jobs.sources import FetchError
     from vouch.llm import get_extraction_llm
     from vouch.services import add_job
 
@@ -392,6 +392,7 @@ def companies_probe(
     search_path: Annotated[Path, typer.Option("--search")] = DEFAULT_SEARCH,
 ) -> None:
     """Find companies' public job boards (Greenhouse, Lever, Ashby) and their India openings."""
+    from vouch.boards import BOARDS
     from vouch.discovery.config import load_search
     from vouch.discovery.probe import probe, read_names
 
@@ -405,7 +406,8 @@ def companies_probe(
     if search_path.exists():
         configured = {(c.ats, c.board) for c in load_search(search_path).companies}
 
-    typer.echo(f"Checking {len(wanted)} companies on Greenhouse, Lever and Ashby...")
+    boards = ", ".join(name.title() for name, board in BOARDS.items() if board.probeable)
+    typer.echo(f"Checking {len(wanted)} companies on {boards}...")
     found = [f for f in probe(wanted) if f.india >= min_india]
     new = [f for f in found if (f.ats, f.board) not in configured]
     for f in found:

@@ -3,15 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from vouch.jobs.html import html_to_text
+from vouch.boards import FetchError, html_to_text
+from vouch.boards.greenhouse import parse_greenhouse
+from vouch.boards.web import parse_web
+from vouch.boards.workday import parse_workday, workday_api_url
 from vouch.jobs.requirements import JobAnalysis, analyze_job, quote_in_text
-from vouch.jobs.sources import (
-    FetchError,
-    parse_greenhouse,
-    parse_web,
-    parse_workday,
-    workday_api_url,
-)
 from vouch.jobs.store import content_hash
 from vouch.llm import FakeLLM
 

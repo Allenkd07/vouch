@@ -16,12 +16,12 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from vouch.boards import FetchError
 from vouch.config import get_settings
 from vouch.db import Application, Job, Match, ResumeVersion, get_sessionmaker
 from vouch.discovery.config import DEFAULT_SEARCH, load_search
 from vouch.discovery.run import discover, rescore_job, skill_gaps
 from vouch.jobs.requirements import analyze_job
-from vouch.jobs.sources import FetchError
 from vouch.jobs.store import save_analysis
 from vouch.llm import LLMError, get_extraction_llm, get_llm
 from vouch.profile.schema import lint, load_profile
