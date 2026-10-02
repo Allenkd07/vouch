@@ -30,8 +30,8 @@ def test_sync_upserts_removes_and_dedupes_snapshots(session):
 
 def test_upsert_job_dedupes_by_url_and_content(session):
     from vouch.boards import FetchedJob
+    from vouch.jobs.repository import needs_analysis, save_analysis, upsert_job
     from vouch.jobs.requirements import JobAnalysis, VerifiedAnalysis
-    from vouch.jobs.store import needs_analysis, save_analysis, upsert_job
 
     fetched = FetchedJob("web", "https://x.example/zz-1", "X", "SDE", None, "Build APIs in Go")
     job, changed = upsert_job(session, fetched)

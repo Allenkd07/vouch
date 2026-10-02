@@ -4,17 +4,18 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from vouch.applications import repository as applications_db
 from vouch.boards import FetchedJob, fetch_job, manual_job
 from vouch.config import Settings
 from vouch.db import Application, Job, ResumeVersion
+from vouch.jobs import repository as jobs_db
 from vouch.jobs.requirements import JobAnalysis, VerifiedAnalysis, analyze_job, quote_in_text
-from vouch.jobs.store import needs_analysis, save_analysis, upsert_job
 from vouch.llm import LLM
 from vouch.profile.schema import Profile
 from vouch.profile.sync import sync_profile
+from vouch.tailoring import repository as versions_db
 from vouch.tailoring.document import ResumeDoc
 from vouch.tailoring.pipeline import TailorReport, report_markdown, tailor
 from vouch.tailoring.render import page_count, render_docx, render_pdf
@@ -42,10 +43,10 @@ def add_job(
     fetched: FetchedJob = manual_job(text, url, company, title) if text else fetch_job(url)
     fetched.company = company or fetched.company
     fetched.title = title or fetched.title
-    job, changed = upsert_job(session, fetched)
-    if reanalyze or needs_analysis(job):
+    job, changed = jobs_db.upsert_job(session, fetched)
+    if reanalyze or jobs_db.needs_analysis(job):
         analysis = analyze_job(job.description, llm, title=job.title)
-        save_analysis(job, analysis, settings.extraction_model)
+        jobs_db.save_analysis(job, analysis, settings.extraction_model)
     return job, changed
 
 
@@ -69,16 +70,17 @@ def create_version(
         raise ValueError(f"job {job.id} has not been analysed")
     snapshot_id = sync_profile(session, profile).snapshot_id
     result = tailor(profile, analysis, llm, max_pages=pages)
-    version = ResumeVersion(
-        job_id=job.id,
-        profile_snapshot_id=snapshot_id,
-        model=settings.llm_model,
-        content=result.doc.model_dump(mode="json"),
-        report=result.report.model_dump(mode="json"),
-        evidence=result.evidence.model_dump(mode="json"),
+    version = versions_db.add(
+        session,
+        ResumeVersion(
+            job_id=job.id,
+            profile_snapshot_id=snapshot_id,
+            model=settings.llm_model,
+            content=result.doc.model_dump(mode="json"),
+            report=result.report.model_dump(mode="json"),
+            evidence=result.evidence.model_dump(mode="json"),
+        ),
     )
-    session.add(version)
-    session.flush()
     folder = version_folder(job, version, out)
     (folder / "report.md").write_text(report_markdown(result, analysis), encoding="utf-8")
     _write_files(version, result.doc, job, folder, result.pdf)
@@ -106,7 +108,7 @@ def _write_files(
 def save_edits(session: Session, version: ResumeVersion, doc: ResumeDoc) -> TailorReport:
     """Store an edited document, re-render its files, and refresh page count and keyword
     coverage. Editing clears any previous approval."""
-    job = session.get(Job, version.job_id)
+    job = jobs_db.get(session, version.job_id)
     analysis = job_analysis(job)
     pdf = render_pdf(doc.for_render())
     report = TailorReport.model_validate(version.report)
@@ -122,22 +124,17 @@ def save_edits(session: Session, version: ResumeVersion, doc: ResumeDoc) -> Tail
     return report
 
 
-def get_application(session: Session, job_id: int) -> Application | None:
-    return session.scalar(select(Application).where(Application.job_id == job_id))
-
-
 def set_status(session: Session, job_id: int, status: str | None) -> Application | None:
     """status None (or "") removes the job from the tracker."""
-    app = get_application(session, job_id)
+    app = applications_db.for_job(session, job_id)
     if not status:
         if app:
-            session.delete(app)
+            applications_db.delete(session, app)
         return None
     if status not in STATUSES:
         raise ValueError(f"unknown status {status!r}")
     if app is None:
-        app = Application(job_id=job_id, status=status)
-        session.add(app)
+        app = applications_db.add(session, Application(job_id=job_id, status=status))
     app.status = status
     if status == "applied" and app.applied_at is None:
         app.applied_at = datetime.now(UTC)
@@ -148,5 +145,7 @@ def set_status(session: Session, job_id: int, status: str | None) -> Application
 def approve_version(session: Session, version: ResumeVersion) -> None:
     """Mark a version ready to send and attach it to the job's application."""
     version.approved_at = datetime.now(UTC)
-    app = get_application(session, version.job_id) or set_status(session, version.job_id, "saved")
+    app = applications_db.for_job(session, version.job_id) or set_status(
+        session, version.job_id, "saved"
+    )
     app.resume_version_id = version.id

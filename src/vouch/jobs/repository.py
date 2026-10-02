@@ -1,19 +1,41 @@
+"""Reading and writing jobs."""
+
 import hashlib
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from vouch.boards import FetchedJob
 from vouch.db import Job
 from vouch.jobs.requirements import VerifiedAnalysis
 
+ACTIVE_DAYS = 3  # a discovered job not seen on any board for this long counts as closed
+
 
 def content_hash(description: str) -> str:
     """Whitespace/case-insensitive, so cosmetic re-renders of a posting don't count as changes."""
     canonical = re.sub(r"\s+", " ", description).strip().lower()
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def get(session: Session, job_id: int) -> Job | None:
+    return session.get(Job, job_id)
+
+
+def recent(session: Session, limit: int) -> list[Job]:
+    """Most recently fetched first."""
+    return list(session.scalars(select(Job).order_by(Job.fetched_at.desc()).limit(limit)))
+
+
+def active_filter(now: datetime):
+    """Manually added jobs always; discovered ones while they're still listed."""
+    return or_(Job.last_seen_at.is_(None), Job.last_seen_at >= now - timedelta(days=ACTIVE_DAYS))
+
+
+def active(session: Session, now: datetime) -> list[Job]:
+    return list(session.scalars(select(Job).where(active_filter(now))))
 
 
 def upsert_job(session: Session, fetched: FetchedJob) -> tuple[Job, bool]:

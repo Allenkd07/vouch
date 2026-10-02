@@ -4,30 +4,27 @@ Cost grows left to right, so each step only sees what the previous one kept: fet
 filtering are free, embeddings are one batched request, and only `analyze_per_run` jobs reach
 the LLM, `batch_size` postings per request."""
 
-from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import httpx
-from sqlalchemy import or_, select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from vouch.boards import BOARDS, FetchedJob, list_jobs, new_client
 from vouch.config import Settings
-from vouch.db import Application, Job, JobEmbedding, Match
+from vouch.db import Job, JobEmbedding
+from vouch.discovery import repository as matches_db
 from vouch.discovery.config import Company, SearchConfig
 from vouch.discovery.filters import rejection_reason
-from vouch.discovery.fit import Fit, score_fit
+from vouch.discovery.fit import score_fit
+from vouch.jobs import repository as jobs_db
 from vouch.jobs.requirements import VerifiedAnalysis, analyze_jobs
-from vouch.jobs.store import needs_analysis, save_analysis, upsert_job
 from vouch.llm import LLM, LLMError
 from vouch.profile.schema import Profile
 
 EMBED_DIMENSIONS = 768
-ACTIVE_DAYS = 3  # a discovered job not seen on any board for this long counts as closed
 
 
 @dataclass
@@ -82,11 +79,6 @@ def job_text(job: Job) -> str:
     return f"{job.title}\n{job.company}\n{job.description[:2000]}"
 
 
-def active_jobs_filter(now: datetime):
-    """Manually added jobs always; discovered ones while they're still listed."""
-    return or_(Job.last_seen_at.is_(None), Job.last_seen_at >= now - timedelta(days=ACTIVE_DAYS))
-
-
 def discover(
     session: Session,
     config: SearchConfig,
@@ -111,12 +103,12 @@ def discover(
     # 2. Store what passed the filters.
     for c in companies:
         for fetched in c.kept:
-            job, changed = upsert_job(session, fetched)
+            job, changed = jobs_db.upsert_job(session, fetched)
             job.last_seen_at = now
             result.new_or_changed += changed
     session.commit()
 
-    active = session.scalars(select(Job).where(active_jobs_filter(now))).all()
+    active = jobs_db.active(session, now)
 
     # 3. Embed jobs whose text changed since their last embedding (one batched request).
     similarity: dict[int, float] = {}
@@ -124,18 +116,13 @@ def discover(
         similarity, result.embedded = _embed_and_rank(session, active, profile, llm, settings)
     except LLMError as e:
         # Keep the similarity from earlier runs rather than wiping it; new jobs go without.
-        previous = session.execute(
-            select(Match.job_id, Match.similarity).where(
-                Match.job_id.in_([j.id for j in active]), Match.similarity.is_not(None)
-            )
-        ).all()
-        similarity = {job_id: sim for job_id, sim in previous}
+        similarity = matches_db.stored_similarities(session, [j.id for j in active])
         result.notes.append(f"Similarity not updated (kept earlier values): {e}")
 
     # 4. Extract requirements for the most similar unanalysed jobs (the LLM step), several
     #    postings per request so the daily quota covers many more jobs.
     candidates = sorted(
-        (j for j in active if needs_analysis(j)), key=lambda j: -similarity.get(j.id, 0.0)
+        (j for j in active if jobs_db.needs_analysis(j)), key=lambda j: -similarity.get(j.id, 0.0)
     )
     todo = candidates[:analyze]
     batch = config.ranking.batch_size
@@ -151,7 +138,7 @@ def discover(
             if (analysis := analyses.get(str(job.id))) is None:
                 skipped += 1  # the model left it out; a later run retries it
                 continue
-            save_analysis(job, analysis, settings.extraction_model)
+            jobs_db.save_analysis(job, analysis, settings.extraction_model)
             result.analyzed.append(job.id)
             log(f"Analysed: {job.title} @ {job.company}")
         session.commit()
@@ -178,7 +165,7 @@ def discover(
                 now,
                 accept_years_up_to=config.ranking.accept_years_up_to,
             )
-        _upsert_match(session, job.id, fit, similarity.get(job.id))
+        matches_db.upsert_match(session, job.id, fit, similarity.get(job.id))
         result.scored += 1
     session.commit()
     return result
@@ -188,12 +175,8 @@ def _embed_and_rank(
     session: Session, jobs: list[Job], profile: Profile, llm: LLM, settings: Settings
 ) -> tuple[dict[int, float], int]:
     model = f"{settings.embedding_model}@{EMBED_DIMENSIONS}"
-    existing = {
-        e.job_id: e
-        for e in session.scalars(
-            select(JobEmbedding).where(JobEmbedding.job_id.in_([j.id for j in jobs]))
-        )
-    }
+    job_ids = [j.id for j in jobs]
+    existing = matches_db.embeddings_for(session, job_ids)
     stale = [
         j
         for j in jobs
@@ -209,60 +192,13 @@ def _embed_and_rank(
             f"{settings.embedding_model} returned {len(profile_vec)}-dimension vectors, "
             f"expected {EMBED_DIMENSIONS}"
         )
+    rows = []
     for job, vec in zip(stale, job_vecs, strict=True):
         row = existing.get(job.id) or JobEmbedding(job_id=job.id)
         row.model, row.content_hash, row.embedding = model, job.content_hash, vec
-        session.add(row)
-    session.flush()
-
-    # Cosine similarity in Postgres via pgvector (vectors are unit length).
-    rows = session.execute(
-        select(JobEmbedding.job_id, 1 - JobEmbedding.embedding.cosine_distance(profile_vec)).where(
-            JobEmbedding.model == model, JobEmbedding.job_id.in_([j.id for j in jobs])
-        )
-    ).all()
-    return {job_id: float(sim) for job_id, sim in rows}, len(stale)
-
-
-def _upsert_match(session: Session, job_id: int, fit: Fit | None, similarity: float | None):
-    values = {
-        "job_id": job_id,
-        "score": fit.score if fit else None,
-        "similarity": similarity,
-        "fit": fit.model_dump() if fit else None,
-        "updated_at": datetime.now(UTC),
-    }
-    stmt = insert(Match).values(values)
-    session.execute(
-        stmt.on_conflict_do_update(
-            index_elements=[Match.job_id],
-            set_={k: stmt.excluded[k] for k in ("score", "similarity", "fit", "updated_at")},
-        )
-    )
-
-
-def ranked_matches(session: Session, limit: int = 50, now: datetime | None = None):
-    """[(Job, Match, Application | None)] best first: scored jobs by score, then the rest by
-    similarity. Closed postings and rejected applications are left out."""
-    now = now or datetime.now(UTC)
-    return session.execute(
-        select(Job, Match, Application)
-        .join(Match, Match.job_id == Job.id)
-        .outerjoin(Application, Application.job_id == Job.id)
-        .where(active_jobs_filter(now))
-        .where(or_(Application.status.is_(None), Application.status != "rejected"))
-        .order_by(Match.score.desc().nulls_last(), Match.similarity.desc().nulls_last())
-        .limit(limit)
-    ).all()
-
-
-def skill_gaps(rows, top: int = 30) -> list[tuple[str, int]]:
-    """Missing must-have skills most often asked for across the best-scored matches."""
-    counts: Counter[str] = Counter()
-    scored = [m for _, m, _ in rows if m.fit][:top]
-    for m in scored:
-        counts.update({name.strip(): 1 for name in m.fit["missing_must"]})
-    return counts.most_common(10)
+        rows.append(row)
+    matches_db.save_embeddings(session, rows)
+    return matches_db.similarities(session, model, job_ids, profile_vec), len(stale)
 
 
 def rescore_job(
@@ -276,8 +212,8 @@ def rescore_job(
     similarity from the last discovery run."""
     if not job.analysis:
         return
-    match = session.get(Match, job.id)
+    match = matches_db.get_match(session, job.id)
     similarity = match.similarity if match else None
     analysis = VerifiedAnalysis.model_validate(job.analysis).analysis
     fit = score_fit(profile, analysis, similarity, now, accept_years_up_to=accept_years_up_to)
-    _upsert_match(session, job.id, fit, similarity)
+    matches_db.upsert_match(session, job.id, fit, similarity)

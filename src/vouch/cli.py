@@ -173,12 +173,11 @@ def job_add(
 @job_app.command("list")
 def job_list(limit: int = 20) -> None:
     """Most recently fetched jobs."""
-    from sqlalchemy import select
-
-    from vouch.db import Job, get_sessionmaker
+    from vouch.db import get_sessionmaker
+    from vouch.jobs import repository as jobs_db
 
     with get_sessionmaker()() as session:
-        jobs = session.scalars(select(Job).order_by(Job.fetched_at.desc()).limit(limit)).all()
+        jobs = jobs_db.recent(session, limit)
     for j in jobs:
         typer.echo(f"{j.id:>4}  {j.fetched_at:%Y-%m-%d}  {j.company or '?'} | {j.title or '?'}")
 
@@ -186,10 +185,11 @@ def job_list(limit: int = 20) -> None:
 @job_app.command("show")
 def job_show(job_id: int, description: bool = False) -> None:
     """Requirements for one job (--description to include the full posting)."""
-    from vouch.db import Job, get_sessionmaker
+    from vouch.db import get_sessionmaker
+    from vouch.jobs import repository as jobs_db
 
     with get_sessionmaker()() as session:
-        job = session.get(Job, job_id)
+        job = jobs_db.get(session, job_id)
     if job is None:
         typer.echo(f"no job {job_id}", err=True)
         raise typer.Exit(1)
@@ -243,7 +243,8 @@ def tailor_cmd(
 ) -> None:
     """Build a tailored, verified resume (PDF + DOCX + report) for a stored job."""
 
-    from vouch.db import Job, get_sessionmaker
+    from vouch.db import get_sessionmaker
+    from vouch.jobs import repository as jobs_db
     from vouch.llm import get_llm
     from vouch.services import create_version, job_analysis
     from vouch.tailoring.document import ResumeDoc
@@ -252,7 +253,7 @@ def tailor_cmd(
     settings = get_settings()
     profile = _load(profile_path)
     with get_sessionmaker()() as session:
-        job = session.get(Job, job_id)
+        job = jobs_db.get(session, job_id)
         analysis = job_analysis(job) if job else None
         if analysis is None:
             typer.echo(f"job {job_id} not found or not analysed (run `vouch job add`)", err=True)
@@ -359,7 +360,7 @@ def discover_cmd(
 def matches_cmd(limit: int = 20) -> None:
     """Jobs ranked by estimated fit (score needs extracted requirements; others by similarity)."""
     from vouch.db import get_sessionmaker
-    from vouch.discovery.run import ranked_matches, skill_gaps
+    from vouch.discovery.queries import ranked_matches, skill_gaps
 
     with get_sessionmaker()() as session:
         rows = ranked_matches(session, limit=limit)

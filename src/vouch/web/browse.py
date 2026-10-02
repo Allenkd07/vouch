@@ -11,12 +11,11 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from vouch.db import Application, Job, Match
 from vouch.discovery.filters import age_days
-from vouch.discovery.run import active_jobs_filter
+from vouch.discovery.queries import job_rows
 
 # Location spellings -> one display name. Unknown places are shown as written.
 CITIES = {
@@ -100,14 +99,8 @@ def parse_params(query, default_sort: str) -> Params:
 
 def load_rows(session: Session, *, active_only: bool, now: datetime | None = None) -> list[Row]:
     now = now or datetime.now(UTC)
-    query = (
-        select(Job, Match, Application)
-        .outerjoin(Match, Match.job_id == Job.id)
-        .outerjoin(Application, Application.job_id == Job.id)
-    )
-    if active_only:
-        query = query.where(active_jobs_filter(now))
-    return [_row(job, match, app, now) for job, match, app in session.execute(query).all()]
+    rows = job_rows(session, active_only=active_only, now=now)
+    return [_row(job, match, app, now) for job, match, app in rows]
 
 
 def _row(job: Job, match: Match | None, app: Application | None, now: datetime) -> Row:

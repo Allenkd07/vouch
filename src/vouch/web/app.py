@@ -13,16 +13,18 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from vouch.applications import repository as applications_db
 from vouch.boards import FetchError
 from vouch.config import get_settings
-from vouch.db import Application, Job, Match, ResumeVersion, get_sessionmaker
+from vouch.db import Job, ResumeVersion, get_sessionmaker
+from vouch.discovery import repository as matches_db
 from vouch.discovery.config import DEFAULT_SEARCH, load_search
-from vouch.discovery.run import discover, rescore_job, skill_gaps
+from vouch.discovery.queries import skill_gaps
+from vouch.discovery.run import discover, rescore_job
+from vouch.jobs import repository as jobs_db
 from vouch.jobs.requirements import analyze_job
-from vouch.jobs.store import save_analysis
 from vouch.llm import LLMError, get_extraction_llm, get_llm
 from vouch.profile.schema import lint, load_profile
 from vouch.services import (
@@ -30,11 +32,11 @@ from vouch.services import (
     add_job,
     approve_version,
     create_version,
-    get_application,
     job_analysis,
     save_edits,
     set_status,
 )
+from vouch.tailoring import repository as versions_db
 from vouch.tailoring.document import ResumeDoc
 from vouch.tailoring.pipeline import TailorReport
 from vouch.web import browse as browsing
@@ -93,13 +95,6 @@ def create_app(
             "total": len(report.coverage),
         }
 
-    def latest_version(session: Session, job_id: int) -> ResumeVersion | None:
-        return session.scalar(
-            select(ResumeVersion)
-            .where(ResumeVersion.job_id == job_id)
-            .order_by(ResumeVersion.id.desc())
-        )
-
     # --- jobs -------------------------------------------------------------------------------
 
     @app.get("/")
@@ -152,12 +147,8 @@ def create_app(
     def job_detail(
         job_id: int, request: Request, session: Session = Depends(get_session), error: str = ""
     ):
-        job = session.get(Job, job_id) or _not_found()
-        versions = session.scalars(
-            select(ResumeVersion)
-            .where(ResumeVersion.job_id == job_id)
-            .order_by(ResumeVersion.id.desc())
-        ).all()
+        job = jobs_db.get(session, job_id) or _not_found()
+        versions = versions_db.for_job(session, job_id)
         latest = versions[0] if versions else None
         coverage = TailorReport.model_validate(latest.report).coverage if latest else []
         return page(
@@ -165,17 +156,17 @@ def create_app(
             "job.html",
             job=job,
             analysis=job_analysis(job),
-            app=get_application(session, job_id),
+            app=applications_db.for_job(session, job_id),
             versions=[(v, coverage_counts(v)) for v in versions],
             coverage={c.requirement: c for c in coverage},
             run=runs.get(job_id),
-            match=session.get(Match, job_id),
+            match=matches_db.get_match(session, job_id),
             error=error,
         )
 
     @app.post("/jobs/{job_id}/analyze")
     def job_analyze(job_id: int, request: Request, session: Session = Depends(get_session)):
-        job = session.get(Job, job_id) or _not_found()
+        job = jobs_db.get(session, job_id) or _not_found()
         settings = get_settings()
         inline = request.headers.get("HX-Request") == "true"  # the button on a list row
         try:
@@ -184,7 +175,7 @@ def create_app(
             if inline:
                 return page(request, "_job_row.html", row=_row_for(session, job), error=str(e))
             return job_detail(job_id, request, session, error=str(e))
-        save_analysis(job, result, settings.extraction_model)
+        jobs_db.save_analysis(job, result, settings.extraction_model)
         try:
             years = (
                 load_search(search_path).ranking.accept_years_up_to if search_path.exists() else 5
@@ -207,7 +198,7 @@ def create_app(
         status: str = Form(""),
         session: Session = Depends(get_session),
     ):
-        session.get(Job, job_id) or _not_found()
+        jobs_db.get(session, job_id) or _not_found()
         app_row = set_status(session, job_id, status or None)
         session.commit()
         return page(request, "_status.html", job_id=job_id, app=app_row, saved=True)
@@ -219,7 +210,7 @@ def create_app(
         try:
             profile = load_profile(profile_path)
             with (make_session or get_sessionmaker())() as session:
-                job = session.get(Job, job_id)
+                job = jobs_db.get(session, job_id)
                 version = create_version(session, job, profile, get_llm(settings), settings)
                 session.commit()
                 runs[job_id] = TailorRun("done", version_id=version.id)
@@ -231,7 +222,7 @@ def create_app(
 
     @app.post("/jobs/{job_id}/tailor")
     def tailor_start(job_id: int, request: Request, session: Session = Depends(get_session)):
-        job = session.get(Job, job_id) or _not_found()
+        job = jobs_db.get(session, job_id) or _not_found()
         if job_analysis(job) is None:
             raise HTTPException(400, "Job has no extracted requirements yet")
         if runs.get(job_id, TailorRun("idle")).state != "running":
@@ -250,7 +241,7 @@ def create_app(
     # --- resume versions --------------------------------------------------------------------
 
     def version_page(request: Request, session: Session, version: ResumeVersion, notice=""):
-        job = session.get(Job, version.job_id)
+        job = jobs_db.get(session, version.job_id)
         return page(
             request,
             "version.html",
@@ -259,13 +250,13 @@ def create_app(
             doc=ResumeDoc.model_validate(version.content),
             report=TailorReport.model_validate(version.report),
             analysis=job_analysis(job),
-            app=get_application(session, job.id),
+            app=applications_db.for_job(session, job.id),
             notice=notice,
         )
 
     @app.get("/versions/{version_id}")
     def version_view(version_id: int, request: Request, session: Session = Depends(get_session)):
-        version = session.get(ResumeVersion, version_id) or _not_found()
+        version = versions_db.get(session, version_id) or _not_found()
         notice = {"saved": "Changes saved and resume rebuilt.", "approved": "Approved."}.get(
             request.query_params.get("done", ""), ""
         )
@@ -275,7 +266,7 @@ def create_app(
     async def version_save(
         version_id: int, request: Request, session: Session = Depends(get_session)
     ):
-        version = session.get(ResumeVersion, version_id) or _not_found()
+        version = versions_db.get(session, version_id) or _not_found()
         form = await request.form()
         doc = apply_form(ResumeDoc.model_validate(version.content), form)
         save_edits(session, version, doc)
@@ -284,14 +275,14 @@ def create_app(
 
     @app.post("/versions/{version_id}/approve")
     def version_approve(version_id: int, session: Session = Depends(get_session)):
-        version = session.get(ResumeVersion, version_id) or _not_found()
+        version = versions_db.get(session, version_id) or _not_found()
         approve_version(session, version)
         session.commit()
         return RedirectResponse(f"/versions/{version_id}?done=approved", status_code=303)
 
     @app.get("/versions/{version_id}/{kind}")
     def version_file(version_id: int, kind: str, session: Session = Depends(get_session)):
-        version = session.get(ResumeVersion, version_id) or _not_found()
+        version = versions_db.get(session, version_id) or _not_found()
         path = {"pdf": version.pdf_path, "docx": version.docx_path}.get(kind)
         if not path or not Path(path).exists():
             _not_found()
@@ -361,11 +352,7 @@ def create_app(
 
     @app.get("/applications")
     def applications(request: Request, session: Session = Depends(get_session)):
-        rows = session.execute(
-            select(Application, Job)
-            .join(Job, Job.id == Application.job_id)
-            .order_by(Application.updated_at.desc())
-        ).all()
+        rows = applications_db.with_jobs(session)
         groups = {s: [(a, j) for a, j in rows if a.status == s] for s in STATUSES}
         return page(request, "applications.html", groups=groups)
 
@@ -373,7 +360,7 @@ def create_app(
     def application_notes(
         job_id: int, notes: str = Form(""), session: Session = Depends(get_session)
     ):
-        app_row = get_application(session, job_id) or _not_found()
+        app_row = applications_db.for_job(session, job_id) or _not_found()
         app_row.notes = notes
         session.commit()
         return HTMLResponse('<span class="saved" role="status">Saved</span>')
