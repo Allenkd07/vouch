@@ -15,6 +15,7 @@ from vouch.discovery.config import DEFAULT_SEARCH, SearchConfig, load_search
 from vouch.jobs.service import Scoring, load_scoring
 from vouch.llm import LLM, get_llm
 from vouch.profile.schema import DEFAULT_PROFILE, Profile, load_profile
+from vouch.runs.runner import TaskRunner, ThreadRunner
 
 
 @dataclass
@@ -22,6 +23,7 @@ class Deps:
     settings: Settings
     sessions: sessionmaker
     llm_factory: Callable[[Role], LLM]
+    runner: TaskRunner = field(default_factory=ThreadRunner)  # where background work runs
     profile_path: Path = DEFAULT_PROFILE
     search_path: Path = DEFAULT_SEARCH
     _llms: dict[Role, LLM] = field(default_factory=dict, repr=False)
@@ -50,6 +52,7 @@ def build(
     *,
     sessions: sessionmaker | None = None,
     llm_factory: Callable[[Role], LLM] | None = None,
+    runner: TaskRunner | None = None,
     profile_path: Path = DEFAULT_PROFILE,
     search_path: Path = DEFAULT_SEARCH,
 ) -> Deps:
@@ -58,6 +61,7 @@ def build(
         settings=settings,
         sessions=sessions or get_sessionmaker(),
         llm_factory=llm_factory or (lambda role: get_llm(settings, role)),
+        runner=runner or ThreadRunner(),
         profile_path=profile_path,
         search_path=search_path,
     )

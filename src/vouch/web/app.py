@@ -2,10 +2,7 @@
 
 Single user, runs on localhost (`vouch web`). Server-rendered Jinja2 + htmx; no build step."""
 
-import logging
-import threading
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -29,6 +26,7 @@ from vouch.jobs import service as job_service
 from vouch.jobs.service import job_analysis
 from vouch.llm import LLMError
 from vouch.profile.schema import lint
+from vouch.runs import service as runs
 from vouch.tailoring import repository as versions_db
 from vouch.tailoring import service as tailoring_service
 from vouch.tailoring.document import ResumeDoc
@@ -37,14 +35,6 @@ from vouch.web import browse as browsing
 from vouch.web.diff import highlight_changes
 
 HERE = Path(__file__).parent
-log = logging.getLogger(__name__)
-
-
-@dataclass
-class TailorRun:
-    state: str  # running | done | error
-    message: str = ""
-    version_id: int | None = None
 
 
 def create_app(deps: Deps) -> FastAPI:
@@ -61,8 +51,6 @@ def create_app(deps: Deps) -> FastAPI:
     templates.env.globals["SORTS"] = browsing.SORTS
     templates.env.globals["FITS"] = browsing.FITS
     templates.env.globals["query_string"] = browsing.query_string
-    runs: dict[int, TailorRun] = {}
-    discovery: dict[str, TailorRun] = {}  # single entry under "run"
 
     def get_session() -> Iterator[Session]:
         with deps.sessions() as session:
@@ -146,7 +134,7 @@ def create_app(deps: Deps) -> FastAPI:
             app=applications_db.for_job(session, job_id),
             versions=[(v, coverage_counts(v)) for v in versions],
             coverage={c.requirement: c for c in coverage},
-            run=runs.get(job_id),
+            run=runs.latest(session, "tailor", job_id),
             match=matches_db.get_match(session, job_id),
             error=error,
         )
@@ -181,37 +169,31 @@ def create_app(deps: Deps) -> FastAPI:
 
     # --- tailoring --------------------------------------------------------------------------
 
-    def run_tailor(job_id: int) -> None:
-        try:
-            profile = deps.profile()
-            with deps.sessions() as session:
-                job = jobs_db.get(session, job_id)
-                version = tailoring_service.create_version(
-                    session, job, profile, deps.llm("tailoring"), deps.settings
-                )
-                runs[job_id] = TailorRun("done", version_id=version.id)
-        except (LLMError, ValidationError, ValueError, OSError) as e:
-            runs[job_id] = TailorRun("error", message=str(e))
-        except Exception as e:  # noqa: BLE001 - a background run must never die silently
-            log.exception("tailoring job %s failed", job_id)
-            runs[job_id] = TailorRun("error", message=f"Unexpected error ({type(e).__name__}): {e}")
+    def tailor_work(job_id: int) -> runs.Work:
+        def work(session: Session) -> tuple[str, int]:
+            job = jobs_db.get(session, job_id)
+            version = tailoring_service.create_version(
+                session, job, deps.profile(), deps.llm("tailoring"), deps.settings
+            )
+            return "", version.id
+
+        return work
 
     @app.post("/jobs/{job_id}/tailor")
     def tailor_start(job_id: int, request: Request, session: Session = Depends(get_session)):
         job = jobs_db.get(session, job_id) or _not_found()
         if job_analysis(job) is None:
             raise HTTPException(400, "Job has no extracted requirements yet")
-        if runs.get(job_id, TailorRun("idle")).state != "running":
-            runs[job_id] = TailorRun("running")
-            threading.Thread(target=run_tailor, args=(job_id,), daemon=True).start()
-        return page(request, "_run.html", job_id=job_id, run=runs[job_id])
+        run = runs.start(
+            session, deps.sessions, deps.runner, "tailor", tailor_work(job_id), job_id=job_id
+        )
+        return page(request, "_run.html", job_id=job_id, run=run)
 
     @app.get("/jobs/{job_id}/tailor")
-    def tailor_status(job_id: int, request: Request):
-        run = runs.get(job_id)
+    def tailor_status(job_id: int, request: Request, session: Session = Depends(get_session)):
+        run = runs.latest(session, "tailor", job_id)
         if run and run.state == "done":
-            runs.pop(job_id)
-            return Response(headers={"HX-Redirect": f"/versions/{run.version_id}"})
+            return Response(headers={"HX-Redirect": f"/versions/{run.result_id}"})
         return page(request, "_run.html", job_id=job_id, run=run)
 
     # --- resume versions --------------------------------------------------------------------
@@ -282,42 +264,32 @@ def create_app(deps: Deps) -> FastAPI:
             "matches.html",
             b=browsing.browse(rows, params),
             gaps=skill_gaps([(r.job, r.match, r.app) for r in ranked]),
-            run=discovery.get("run"),
+            run=runs.latest(session, "discover"),
             has_search=deps.search_path.exists(),
         )
 
-    def run_discovery() -> None:
-        try:
-            config, profile = deps.search(), deps.profile()
-            with deps.sessions() as session:
-                result = discover(session, config, profile, deps.llm("extraction"), deps.settings)
-            kept = sum(len(c.kept) for c in result.companies)
-            failed = [c.name for c in result.companies if c.error]
-            message = (
-                f"Checked {len(result.companies)} companies: {kept} jobs fit your filters, "
-                f"{result.new_or_changed} new or changed, {len(result.analyzed)} analysed."
-            )
-            if failed:
-                message += f" Couldn't reach: {', '.join(failed)}."
-            discovery["run"] = TailorRun("done", message=" ".join([message, *result.notes]))
-        except (LLMError, ValidationError, ValueError, OSError) as e:
-            discovery["run"] = TailorRun("error", message=str(e))
-        except Exception as e:  # noqa: BLE001 - a background run must never die silently
-            log.exception("job search failed")
-            discovery["run"] = TailorRun(
-                "error", message=f"Unexpected error ({type(e).__name__}): {e}"
-            )
+    def discovery_work(session: Session) -> tuple[str, None]:
+        result = discover(
+            session, deps.search(), deps.profile(), deps.llm("extraction"), deps.settings
+        )
+        kept = sum(len(c.kept) for c in result.companies)
+        failed = [c.name for c in result.companies if c.error]
+        message = (
+            f"Checked {len(result.companies)} companies: {kept} jobs fit your filters, "
+            f"{result.new_or_changed} new or changed, {len(result.analyzed)} analysed."
+        )
+        if failed:
+            message += f" Couldn't reach: {', '.join(failed)}."
+        return " ".join([message, *result.notes]), None
 
     @app.post("/discover")
-    def discover_start(request: Request):
-        if discovery.get("run", TailorRun("idle")).state != "running":
-            discovery["run"] = TailorRun("running")
-            threading.Thread(target=run_discovery, daemon=True).start()
-        return page(request, "_discover.html", run=discovery["run"])
+    def discover_start(request: Request, session: Session = Depends(get_session)):
+        run = runs.start(session, deps.sessions, deps.runner, "discover", discovery_work)
+        return page(request, "_discover.html", run=run)
 
     @app.get("/discover")
-    def discover_status(request: Request):
-        run = discovery.get("run")
+    def discover_status(request: Request, session: Session = Depends(get_session)):
+        run = runs.latest(session, "discover")
         if run and run.state == "done":
             return Response(headers={"HX-Redirect": "/matches"})
         return page(request, "_discover.html", run=run)

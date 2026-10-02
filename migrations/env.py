@@ -5,6 +5,7 @@ from sqlalchemy import create_engine
 
 from vouch.config import get_settings
 from vouch.db import Base
+from vouch.runs import models as _runs  # noqa: F401  (registers the runs table)
 
 if context.config.config_file_name is not None:
     fileConfig(context.config.config_file_name)

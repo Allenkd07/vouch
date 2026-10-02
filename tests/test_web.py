@@ -15,6 +15,7 @@ from vouch.jobs.requirements import VerifiedAnalysis
 from vouch.llm import FakeLLM
 from vouch.profile.schema import load_profile
 from vouch.profile.sync import sync_profile
+from vouch.runs.runner import InlineRunner
 from vouch.tailoring.document import ResumeDoc
 from vouch.tailoring.pipeline import tailor
 from vouch.web.app import apply_form, create_app
@@ -75,7 +76,14 @@ def seeded(db, tmp_path):
 
 @pytest.fixture
 def client(db):
-    deps = build(sessions=db, llm_factory=lambda role: FakeLLM(), profile_path=EXAMPLE)
+    # Background work runs inline: the test shares one DB connection between the request and
+    # the worker, which real deployments don't, so a real thread could race on savepoints.
+    deps = build(
+        sessions=db,
+        llm_factory=lambda role: FakeLLM(),
+        runner=InlineRunner(),
+        profile_path=EXAMPLE,
+    )
     return TestClient(create_app(deps))
 
 
@@ -179,17 +187,6 @@ def test_tailor_button_runs_and_redirects_to_new_version(client, db, seeded, mon
         "create_version",
         lambda session, job, profile, llm, settings: session.get(ResumeVersion, version_id),
     )
-
-    # Run the "background" work inline: the test shares one DB connection between the request
-    # and the worker, which real deployments don't, so a real thread could race on savepoints.
-    class InlineThread:
-        def __init__(self, target, args=(), daemon=None):
-            self.target, self.args = target, args
-
-        def start(self):
-            self.target(*self.args)
-
-    monkeypatch.setattr(web.threading, "Thread", InlineThread)
     started = client.post(f"/jobs/{job_id}/tailor")
     assert started.status_code == 200
 
@@ -205,15 +202,7 @@ def test_background_failure_is_reported_not_swallowed(client, seeded, monkeypatc
     def boom(*args, **kwargs):
         raise RuntimeError("disk full")
 
-    class InlineThread:
-        def __init__(self, target, args=(), daemon=None):
-            self.target, self.args = target, args
-
-        def start(self):
-            self.target(*self.args)
-
     monkeypatch.setattr(web.tailoring_service, "create_version", boom)
-    monkeypatch.setattr(web.threading, "Thread", InlineThread)
     client.post(f"/jobs/{job_id}/tailor")
     page = client.get(f"/jobs/{job_id}/tailor")
     assert "Tailoring stopped: Unexpected error (RuntimeError): disk full" in page.text
