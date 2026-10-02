@@ -317,7 +317,8 @@ def discover_cmd(
 ) -> None:
     """Fetch jobs from your target companies, keep the ones that fit your filters, and rank them."""
     from vouch.discovery.config import load_search
-    from vouch.discovery.run import discover, fetch_all
+    from vouch.discovery.fetch import fetch_all
+    from vouch.discovery.service import discover
 
     config = load_search(search_path)
     if check:
@@ -347,6 +348,7 @@ def discover_cmd(
         f"{len(result.analyzed)} analysed in {result.requests} request(s), {result.scored} scored"
         + (f"; failed: {', '.join(failed)}" if failed else "")
     )
+    typer.echo("Time: " + ", ".join(f"{step} {s:.1f}s" for step, s in result.seconds.items()))
     for note in result.notes:
         typer.echo(f"Note: {note}")
     typer.echo("See the ranking with `vouch matches` or on the Matches page.")

@@ -10,7 +10,7 @@ from vouch.boards import fetch_job, manual_job
 from vouch.config import Settings
 from vouch.db import Job
 from vouch.discovery.config import load_search
-from vouch.discovery.run import rescore_job
+from vouch.discovery.service import rescore_job
 from vouch.jobs import repository as jobs_db
 from vouch.jobs.requirements import JobAnalysis, VerifiedAnalysis, analyze_job
 from vouch.llm import LLM

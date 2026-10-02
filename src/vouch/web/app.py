@@ -20,7 +20,7 @@ from vouch.bootstrap import Deps, build
 from vouch.db import Job, ResumeVersion
 from vouch.discovery import repository as matches_db
 from vouch.discovery.queries import skill_gaps
-from vouch.discovery.run import discover
+from vouch.discovery.service import discover
 from vouch.jobs import repository as jobs_db
 from vouch.jobs import service as job_service
 from vouch.jobs.service import job_analysis

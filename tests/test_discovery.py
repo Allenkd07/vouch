@@ -13,7 +13,7 @@ from vouch.discovery.config import Company, Filters, SearchConfig
 from vouch.discovery.filters import rejection_reason
 from vouch.discovery.fit import score_fit, years_of_experience
 from vouch.discovery.queries import ranked_matches, skill_gaps
-from vouch.discovery.run import discover
+from vouch.discovery.service import discover
 from vouch.jobs.requirements import JobAnalysis, Requirement
 from vouch.llm import FakeLLM
 from vouch.profile.schema import load_profile
