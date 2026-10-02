@@ -374,6 +374,48 @@ def matches_cmd(limit: int = 20) -> None:
         typer.echo(f"\nMost-requested skills you don't show: {gap_list}")
 
 
+eval_app = typer.Typer(no_args_is_help=True, help="Evals: measure quality before changing prompts")
+app.add_typer(eval_app, name="eval")
+
+
+@eval_app.command("traps")
+def eval_traps(
+    file: Annotated[Path, typer.Option(exists=True)] = Path("evals/traps.yaml"),
+    free: Annotated[bool, typer.Option(help="Deterministic check only (no LLM request)")] = False,
+) -> None:
+    """Fabricated rewrites the honesty check must reject, and honest ones it must accept."""
+    from vouch.evals.traps import check_all, check_deterministic, load_traps
+
+    traps = load_traps(file)
+    if free:
+        outcomes = check_deterministic(traps)
+    else:
+        deps = _deps()
+        typer.echo(f"Judging with {deps.settings.llm_model} (1 request)...")
+        outcomes = check_all(traps, deps.llm("tailoring"))
+    # Without the judge, traps only it can catch are expected to get through.
+    left = {o.case.id for o in outcomes if free and o.case.caught_by == "judge"}
+    for o in outcomes:
+        mark = "--  " if o.case.id in left else "ok  " if o.correct else "FAIL"
+        verdict = f"rejected by {o.rejected_by}" if o.rejected_by else "accepted"
+        if o.case.id in left:
+            verdict = "left for the judge"
+        typer.echo(f"{mark} {'trap' if o.is_trap else 'ctrl'} {o.case.id:<22} {verdict}")
+        if o.reason and (not o.correct or o.is_trap):
+            typer.echo(f"{'':<33}{o.reason}")
+    caught = [o for o in outcomes if o.is_trap and o.rejected_by]
+    traps_total = sum(o.is_trap for o in outcomes)
+    false_alarms = [o for o in outcomes if not o.is_trap and o.rejected_by]
+    by_judge = sum(o.rejected_by == "judge" for o in caught)
+    typer.echo(
+        f"\nTraps caught: {len(caught)}/{traps_total} ({by_judge} only by the judge"
+        + (f", {len(left)} not checked without it" if free else "")
+        + f"); honest rewrites rejected: {len(false_alarms)}/{len(outcomes) - traps_total}"
+    )
+    if any(not o.correct and o.case.id not in left for o in outcomes):
+        raise typer.Exit(1)
+
+
 companies_app = typer.Typer(no_args_is_help=True, help="Target companies for job discovery")
 app.add_typer(companies_app, name="companies")
 

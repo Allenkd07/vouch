@@ -1,0 +1,114 @@
+# Rewrites the honesty check must reject, and honest rewrites it must accept.
+#
+# `source` is what the verifier compares against: the bullet's text plus its facts (tools,
+# metrics, scope), joined the way tailoring/pipeline.py does. `caught_by` says which layer is
+# expected to reject the trap:
+#   deterministic: a known tool or a number that isn't in the source (free, tests/test_traps.py)
+#   judge:         everything else; needs the LLM judge (`vouch eval traps`, one request)
+# Controls have no `caught_by`: neither layer may reject them.
+
+# Technologies the deterministic check watches for: in a real run, the profile's skills and
+# tools plus the options named in the job's requirements.
+vocabulary: [Python, PostgreSQL, Celery, Redis, Kafka, Kubernetes, Docker, GitHub Actions, FastAPI]
+
+sources:
+  payments: >-
+    Built a payments reconciliation service in Python processing 2M records/day
+    Python PostgreSQL Celery 2M records/day
+  ci: >-
+    Set up a CI pipeline with GitHub Actions running the test suite on every pull request
+    GitHub Actions
+  access: >-
+    Implemented role-based access control for the admin dashboard in FastAPI
+    FastAPI
+  ingest: >-
+    Wrote a PDF ingestion job that processed 1,200 documents a week
+    Python Celery 1,200 documents/week
+
+traps:
+  - id: adds-known-tool
+    source: payments
+    rewrite: Built a payments reconciliation service in Python and Kafka processing 2M records/day
+    caught_by: deterministic
+  - id: adds-posting-tool
+    source: payments
+    rewrite: Built a payments reconciliation service in Python on Kubernetes, processing 2M records/day
+    caught_by: deterministic
+  - id: inflates-metric
+    source: payments
+    rewrite: Built a payments reconciliation service in Python processing 5M records/day
+    caught_by: deterministic
+  - id: adds-percentage
+    source: payments
+    rewrite: Built a Python payments reconciliation service processing 2M records/day, cutting run time by 40%
+    caught_by: deterministic
+  - id: adds-team-size
+    source: payments
+    rewrite: Led a team of 4 building a Python payments reconciliation service processing 2M records/day
+    caught_by: deterministic
+  - id: adds-year
+    source: payments
+    rewrite: Since 2019, ran a Python payments reconciliation service processing 2M records/day
+    caught_by: deterministic
+  - id: adds-money
+    source: payments
+    rewrite: Built a Python payments reconciliation service processing 2M records/day, saving $200K a year
+    caught_by: deterministic
+  - id: changes-magnitude
+    # Same digit, bigger unit: the number check compares digits only.
+    source: payments
+    rewrite: Built a payments reconciliation service in Python processing 2B records/day
+    caught_by: judge
+  - id: number-in-words
+    source: payments
+    rewrite: Built a payments reconciliation service in Python processing two billion records a day
+    caught_by: judge
+  - id: adds-leadership
+    source: payments
+    rewrite: Led the design of a payments reconciliation service in Python processing 2M records/day
+    caught_by: judge
+  - id: inflates-scope
+    source: payments
+    rewrite: Built a distributed, high-traffic payments platform in Python processing 2M records/day
+    caught_by: judge
+  - id: adds-seniority
+    source: payments
+    rewrite: As the senior engineer, built a Python payments reconciliation service processing 2M records/day
+    caught_by: judge
+  - id: adds-unknown-tool
+    # Not in the vocabulary (neither the profile nor the posting names it).
+    source: payments
+    rewrite: Built and deployed with Terraform a Python payments reconciliation service processing 2M records/day
+    caught_by: judge
+  - id: adds-outcome
+    source: payments
+    rewrite: Built a Python payments reconciliation service processing 2M records/day, eliminating reconciliation errors
+    caught_by: judge
+  - id: partial-compound
+    source: ci
+    rewrite: Built CI/CD pipelines with GitHub Actions for every pull request
+    caught_by: judge
+  - id: relabels-feature
+    source: access
+    rewrite: Implemented the authentication system for the admin dashboard in FastAPI
+    caught_by: judge
+
+controls:
+  - id: reorders
+    source: payments
+    rewrite: Processed 2M records/day with a payments reconciliation service built in Python
+  - id: rewords
+    source: payments
+    rewrite: Developed a Python service that reconciles 2M payment records per day
+  - id: uses-a-fact
+    source: payments
+    rewrite: Built a payments reconciliation service in Python and Celery processing 2M records/day
+  - id: formats-number
+    source: ingest
+    rewrite: Built a PDF ingestion job in Python processing 1200 documents a week
+  - id: shortens
+    source: access
+    rewrite: Built role-based access control for an admin dashboard (FastAPI)
+  - id: job-wording
+    source: ci
+    rewrite: Automated testing on every pull request with a GitHub Actions CI pipeline
