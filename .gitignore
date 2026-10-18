@@ -11,6 +11,7 @@ resumes/*
 profile/profile.yaml
 profile/variants/*.yaml
 profile/search.yaml
+evals/labels.yaml
 output/
 
 # Personal planning notes (roadmap, project ideas)

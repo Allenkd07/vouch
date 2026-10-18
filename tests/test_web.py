@@ -10,7 +10,8 @@ from sqlalchemy.orm import sessionmaker
 
 from vouch.bootstrap import build
 from vouch.config import get_settings
-from vouch.db import Application, Job, ResumeVersion
+from vouch.db import Application, Job, Match, ResumeVersion
+from vouch.evals.labels import load_labels
 from vouch.jobs.requirements import VerifiedAnalysis
 from vouch.llm import FakeLLM
 from vouch.profile.schema import load_profile
@@ -75,7 +76,7 @@ def seeded(db, tmp_path):
 
 
 @pytest.fixture
-def client(db):
+def client(db, tmp_path):
     # Background work runs inline: the test shares one DB connection between the request and
     # the worker, which real deployments don't, so a real thread could race on savepoints.
     deps = build(
@@ -83,6 +84,7 @@ def client(db):
         llm_factory=lambda role: FakeLLM(),
         runner=InlineRunner(),
         profile_path=EXAMPLE,
+        labels_path=tmp_path / "labels.yaml",
     )
     return TestClient(create_app(deps))
 
@@ -219,3 +221,33 @@ def test_job_lists_filter_and_show_the_row(client, seeded):
 
     matches = client.get("/matches", params={"sort": "similar"})
     assert matches.status_code == 200 and "Most similar to your profile" in matches.text
+
+
+def test_label_page_hides_the_score_and_saves_labels(client, db, seeded, tmp_path):
+    job_id, _ = seeded
+    with db() as s:
+        s.add(Match(job_id=job_id, score=87.0, similarity=0.6))
+        s.commit()
+
+    page = client.get(f"/label?job={job_id}")
+    assert page.status_code == 200
+    assert "Backend Engineer" in page.text and "87" not in page.text  # labelled blind
+    assert "Mid level" in page.text and "2+ years" in page.text  # what Vouch read, to check
+
+    saved = client.post(
+        f"/label/{job_id}",
+        data={"grade": "bad", "reasons": ["seniority", "stack"], "note": "Needs 8 years"},
+        follow_redirects=False,
+    )
+    assert saved.headers["location"] == f"/label?saved={job_id}"
+    label = load_labels(tmp_path / "labels.yaml")["manual:web-test"]
+    assert (label.grade, label.reasons, label.note) == (
+        "bad",
+        ["seniority", "stack"],
+        "Needs 8 years",
+    )
+
+    after = client.get(f"/label?saved={job_id}")
+    assert "Saved Backend Engineer: bad" in after.text
+    assert f'action="/label/{job_id}"' not in after.text  # labelled jobs leave the queue
+    assert client.post(f"/label/{job_id}", data={"grade": "great"}).status_code == 400

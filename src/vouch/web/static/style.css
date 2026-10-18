@@ -407,6 +407,28 @@ button.small { font-size: 0.85rem; padding: var(--s1) var(--s3); }
 
 /* --- small screens & motion ------------------------------------------------------------ */
 
+/* --- labelling ------------------------------------------------------------------------ */
+
+.label-head { display: flex; align-items: baseline; gap: var(--s4); flex-wrap: wrap; }
+.label-head h1 { margin: 0; }
+kbd {
+  font: inherit; font-size: 0.85em; border: 1px solid var(--rule); border-bottom-width: 2px;
+  border-radius: 3px; padding: 0 0.3em; background: var(--sheet);
+}
+.label-form { display: grid; grid-template-columns: minmax(0, 1fr) 18rem; gap: var(--s5); margin-top: var(--s4); }
+.label-job { background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px; padding: var(--s4) var(--s5); }
+.label-job h2 { margin: 0 0 var(--s1); }
+.label-posting { max-width: none; }
+.label-side { position: sticky; top: var(--s4); align-self: start; display: grid; gap: var(--s4); }
+.label-reasons { border: 1px solid var(--rule); border-radius: 4px; padding: var(--s2) var(--s3); margin: 0; display: grid; gap: var(--s1); }
+.label-reasons legend { padding: 0 var(--s1); }
+.label-note { display: grid; gap: var(--s1); }
+.label-buttons { display: grid; gap: var(--s2); }
+.label-buttons button { text-align: left; }
+.label-buttons .grade-good { border-color: var(--ok); color: var(--ok); font-weight: 700; }
+.label-buttons .grade-bad { border-color: var(--flag); color: var(--flag); }
+.label-buttons .grade-skip { border-color: var(--rule); color: var(--muted); }
+
 @media (max-width: 70rem) {
   .review { grid-template-columns: 1fr; }
   .side { position: static; }
@@ -416,6 +438,8 @@ button.small { font-size: 0.85rem; padding: var(--s1) var(--s3); }
   .page { padding: var(--s4); }
   .topbar { padding: var(--s3) var(--s4); flex-wrap: wrap; gap: var(--s2) var(--s4); }
   .split { grid-template-columns: 1fr; gap: var(--s4); }
+  .label-form { grid-template-columns: 1fr; }
+  .label-side { position: static; }
   .add-row, .pair { flex-direction: column; }
   .sheet { padding: var(--s4) var(--s3) 0; }
   .apps li { grid-template-columns: 1fr; }

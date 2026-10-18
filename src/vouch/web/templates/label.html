@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Label jobs · Vouch{% endblock %}
+{% block content %}
+<div class="label-head">
+  <h1>Label jobs</h1>
+  <p class="muted">{{ done }} labelled · {{ left }} left{% if done %} · <code>vouch eval ranking</code> to see how the ranking does{% endif %}</p>
+</div>
+<p class="hint">One question: <strong>would you apply to this today?</strong> The fit score is hidden so it can't sway you.
+  Keys: <kbd>G</kbd> good, <kbd>O</kbd> okay, <kbd>B</kbd> bad, <kbd>S</kbd> skip.</p>
+
+{% if last %}
+<p class="notice" role="status">Saved {{ last.title or 'job' }}: {{ last.grade }}. <a href="/label?job={{ last.job_id }}">Change</a></p>
+{% endif %}
+
+{% if job %}
+<form method="post" action="/label/{{ job.id }}" class="label-form" id="label-form">
+  <div class="label-job">
+    <h2>{{ job.title or 'Untitled role' }}</h2>
+    <p class="company">{{ job.company or 'Unknown company' }}{% if job.location %}, {{ job.location }}{% endif %}
+      {% if job.url and not job.url.startswith('manual:') %} · <a href="{{ job.url }}" target="_blank" rel="noopener">Open posting</a>{% endif %}</p>
+    {% if analysis %}
+    <p class="facts" title="What Vouch read from the posting; check it against the text below">
+      {{ analysis.seniority|capitalize }} level
+      · {% if analysis.years_experience_min %}{{ analysis.years_experience_min }}{% if analysis.years_experience_max %}–{{ analysis.years_experience_max }}{% else %}+{% endif %} years{% else %}Years not stated{% endif %}
+      · {{ analysis.work_mode|capitalize if analysis.work_mode != 'unknown' else 'Work mode not stated' }}
+    </p>
+    {% endif %}
+    {% if current %}<p class="muted">Currently labelled <strong>{{ current.grade }}</strong>.</p>{% endif %}
+    <div class="posting-text label-posting">{{ job.description }}</div>
+  </div>
+
+  <aside class="label-side">
+    <fieldset class="label-reasons">
+      <legend>If not good, why? <span class="muted">(optional)</span></legend>
+      {% for key, text in reasons.items() %}
+      <label><input type="checkbox" name="reasons" value="{{ key }}" {% if current and key in current.reasons %}checked{% endif %}> {{ text }}</label>
+      {% endfor %}
+    </fieldset>
+    <label class="label-note">Note <span class="muted">(optional)</span>
+      <input type="text" name="note" value="{{ current.note if current else '' }}" autocomplete="off">
+    </label>
+    <div class="label-buttons">
+      {% for key, text in grades.items() %}
+      <button type="submit" name="grade" value="{{ key }}" class="grade-{{ key }}" data-key="{{ key[0] }}">{{ text }}</button>
+      {% endfor %}
+    </div>
+  </aside>
+</form>
+<script>
+  // G/O/B/S submit the matching grade, unless you're typing a note.
+  document.addEventListener("keydown", (e) => {
+    if (e.target.matches("input[type=text], textarea") || e.ctrlKey || e.metaKey || e.altKey) return;
+    const button = document.querySelector(`.label-buttons [data-key="${e.key.toLowerCase()}"]`);
+    if (button) { e.preventDefault(); button.click(); }
+  });
+</script>
+{% else %}
+<p class="empty">Every ranked job is labelled. Run <code>vouch discover</code> for more, or <code>vouch eval ranking</code> for the results.</p>
+{% endif %}
+{% endblock %}

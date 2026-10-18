@@ -21,6 +21,8 @@ from vouch.db import Job, ResumeVersion
 from vouch.discovery import repository as matches_db
 from vouch.discovery.queries import skill_gaps
 from vouch.discovery.service import discover
+from vouch.evals.labels import GRADES, REASONS, load_labels, save_label
+from vouch.evals.ranking import label_queue
 from vouch.jobs import repository as jobs_db
 from vouch.jobs import service as job_service
 from vouch.jobs.service import job_analysis
@@ -314,6 +316,56 @@ def create_app(deps: Deps) -> FastAPI:
         except (OSError, ValidationError) as e:
             return page(request, "profile.html", profile=None, warnings=[], error=str(e))
         return page(request, "profile.html", profile=profile, warnings=lint(profile), error="")
+
+    # --- labelling for the ranking eval ---------------------------------------------------
+
+    @app.get("/label")
+    def label_page(
+        request: Request,
+        job: int | None = None,
+        saved: int | None = None,
+        session: Session = Depends(get_session),
+    ):
+        labels = load_labels(deps.labels_path)
+        queue = label_queue(session, labels)
+        shown = (jobs_db.get(session, job) or _not_found()) if job else next(iter(queue), None)
+        last = jobs_db.get(session, saved) if saved else None
+        return page(
+            request,
+            "label.html",
+            job=shown,
+            analysis=job_analysis(shown) if shown else None,
+            current=labels.get(shown.url) if shown else None,
+            last={"job_id": last.id, "title": last.title, "grade": labels[last.url].grade}
+            if last and last.url in labels
+            else None,
+            done=len(labels),
+            left=len(queue),
+            grades=GRADES,
+            reasons=REASONS,
+        )
+
+    @app.post("/label/{job_id}")
+    def label_save(
+        job_id: int,
+        grade: str = Form(...),
+        reasons: list[str] = Form([]),
+        note: str = Form(""),
+        session: Session = Depends(get_session),
+    ):
+        job = jobs_db.get(session, job_id) or _not_found()
+        if grade not in GRADES:
+            raise HTTPException(400, f"unknown grade {grade!r}")
+        save_label(
+            job.url,
+            grade,
+            reasons=reasons,
+            note=note,
+            title=job.title,
+            company=job.company,
+            path=deps.labels_path,
+        )
+        return RedirectResponse(f"/label?saved={job_id}", status_code=303)
 
     return app
 

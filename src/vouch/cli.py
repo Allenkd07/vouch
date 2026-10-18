@@ -416,6 +416,43 @@ def eval_traps(
         raise typer.Exit(1)
 
 
+@eval_app.command("ranking")
+def eval_ranking(
+    k: Annotated[int, typer.Option(help="Cut-off for precision@k and NDCG@k")] = 10,
+    file: Annotated[Path, typer.Option()] = Path("evals/labels.yaml"),
+) -> None:
+    """How well the fit score ranks the jobs you labelled on the /label page (no LLM calls)."""
+    from vouch.evals.labels import load_labels
+    from vouch.evals.ranking import evaluate, labelled_items
+
+    labels = load_labels(file)
+    with _deps().sessions() as session:
+        items = labelled_items(session, labels)
+    report = evaluate(items, k=k)
+    graded = sum(report.counts.values())
+    if graded < k:
+        typer.echo(f"Only {graded} labelled jobs (need at least {k}); label more on /label.")
+        raise typer.Exit(1)
+    counts = ", ".join(f"{report.counts[g]} {g}" for g in ("good", "okay", "bad"))
+    typer.echo(f"{graded} labelled jobs: {counts}\n")
+    typer.echo(f"{'ranker':<12}{f'precision@{k}':>14}{f'NDCG@{k}':>10}")
+    for name, m in report.metrics.items():
+        typer.echo(f"{name:<12}{m['precision']:>14.2f}{m['ndcg']:>10.2f}")
+    if report.missed_good:
+        typer.echo("\nGood jobs ranked in the bottom half by fit:")
+        for n, i in report.missed_good:
+            score = f"{i.score:.0f}" if i.score is not None else "unscored"
+            typer.echo(f"  #{n:<3} {score:>8}  {i.company} | {i.title}")
+    if report.top_bad:
+        typer.echo(f"\nBad jobs in the fit top {k}:")
+        for n, i in report.top_bad:
+            why = f"  ({', '.join(i.label.reasons)})" if i.label.reasons else ""
+            typer.echo(f"  #{n:<3} {i.score or 0:>8.0f}  {i.company} | {i.title}{why}")
+    if report.bad_reasons:
+        reasons = ", ".join(f"{r} ({n})" for r, n in report.bad_reasons.most_common())
+        typer.echo(f"\nWhy the top {k}'s weaker jobs fall short: {reasons}")
+
+
 companies_app = typer.Typer(no_args_is_help=True, help="Target companies for job discovery")
 app.add_typer(companies_app, name="companies")
 

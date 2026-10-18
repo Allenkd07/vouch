@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from vouch.config import Role, Settings, get_settings
 from vouch.db import get_sessionmaker
 from vouch.discovery.config import DEFAULT_SEARCH, SearchConfig, load_search
+from vouch.evals.labels import DEFAULT_LABELS
 from vouch.jobs.service import Scoring, load_scoring
 from vouch.llm import LLM, get_llm
 from vouch.profile.schema import DEFAULT_PROFILE, Profile, load_profile
@@ -26,6 +27,7 @@ class Deps:
     runner: TaskRunner = field(default_factory=ThreadRunner)  # where background work runs
     profile_path: Path = DEFAULT_PROFILE
     search_path: Path = DEFAULT_SEARCH
+    labels_path: Path = DEFAULT_LABELS  # ranking-eval labels
     _llms: dict[Role, LLM] = field(default_factory=dict, repr=False)
 
     def llm(self, role: Role) -> LLM:
@@ -55,6 +57,7 @@ def build(
     runner: TaskRunner | None = None,
     profile_path: Path = DEFAULT_PROFILE,
     search_path: Path = DEFAULT_SEARCH,
+    labels_path: Path = DEFAULT_LABELS,
 ) -> Deps:
     settings = settings or get_settings()
     return Deps(
@@ -64,4 +67,5 @@ def build(
         runner=runner or ThreadRunner(),
         profile_path=profile_path,
         search_path=search_path,
+        labels_path=labels_path,
     )

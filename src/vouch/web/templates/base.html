@@ -19,6 +19,7 @@
       <a href="/jobs" {% if here.startswith('/jobs') or here.startswith('/versions') %}aria-current="page"{% endif %}>Jobs</a>
       <a href="/applications" {% if here.startswith('/applications') %}aria-current="page"{% endif %}>Applications</a>
       <a href="/profile" {% if here.startswith('/profile') %}aria-current="page"{% endif %}>Profile</a>
+      <a href="/label" {% if here.startswith('/label') %}aria-current="page"{% endif %}>Label</a>
     </nav>
   </header>
   <main class="{% block main_class %}page{% endblock %}">
