@@ -116,7 +116,8 @@ def extract(ctx: DiscoveryContext) -> None:
         result.requests += 1
     if skipped:
         result.notes.append(
-            f"{skipped} job(s) were left out of a batch response; retried next run."
+            f"{skipped} job(s) were left out of a batch response or came back malformed; "
+            "retried next run."
         )
     if len(candidates) > len(result.analyzed):
         result.notes.append(

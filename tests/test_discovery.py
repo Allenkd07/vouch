@@ -232,6 +232,26 @@ def test_analyze_jobs_leaves_out_postings_the_model_skipped():
     assert set(results) == {"a"}
 
 
+def test_invented_categories_count_as_unchecked_practices():
+    req = _req("Distributed systems", category="knowledge")
+    assert req.category == "practice"
+    assert _req("Teamwork", category="Soft skill").category == "soft_skill"
+    assert _req("Python", category="language").category == "language"
+
+
+def test_a_malformed_posting_does_not_sink_its_batch():
+    from vouch.jobs.requirements import analyze_jobs
+
+    good = _analysis([]).model_dump(mode="json")
+    broken = {**good, "seniority": "wizard"}
+
+    def respond(prompt, schema):
+        return {"items": [{"ref": "a", "analysis": good}, {"ref": "b", "analysis": broken}]}
+
+    results = analyze_jobs([("a", None, "x"), ("b", None, "y")], FakeLLM(respond))
+    assert set(results) == {"a"}  # b is retried next run, like a skipped posting
+
+
 def test_discovery_batches_extraction_requests(session):
     profile = load_profile(EXAMPLE)
     jobs = {
@@ -277,6 +297,10 @@ def test_discovery_batches_extraction_requests(session):
 # --- a whole run against the database ------------------------------------------------------------
 
 
+# The real (rolled-back) database holds other jobs too; look past the page limit.
+ALL = 100_000
+
+
 def test_discover_run(session):
     profile = load_profile(EXAMPLE)
     config = SearchConfig(
@@ -296,7 +320,7 @@ def test_discover_run(session):
     assert first.new_or_changed == 1 and job.id in first.analyzed and first.embedded >= 1
     assert job.company == "Acme" and job.last_seen_at == NOW
 
-    rows = [r for r in ranked_matches(session, now=NOW) if r[0].id == job.id]
+    rows = [r for r in ranked_matches(session, limit=ALL, now=NOW) if r[0].id == job.id]
     _, match, _ = rows[0]
     assert match.fit["missing_must"] == ["Go"] and match.score is not None
     assert skill_gaps(rows) == [("Go", 1)]
@@ -322,7 +346,11 @@ def test_discover_run(session):
         session, config, profile, llm, settings, client=client, now=NOW + timedelta(days=2)
     )
     assert any("kept earlier values" in n for n in offline.notes)
-    kept = [r for r in ranked_matches(session, now=NOW + timedelta(days=2)) if r[0].id == job.id]
+    kept = [
+        r
+        for r in ranked_matches(session, limit=ALL, now=NOW + timedelta(days=2))
+        if r[0].id == job.id
+    ]
     assert kept[0][1].similarity == match.similarity is not None
     llm.embed = real_embed
 
@@ -330,7 +358,7 @@ def test_discover_run(session):
     later = NOW + timedelta(days=6)  # last seen on day 2; more than ACTIVE_DAYS ago
     empty = _mock_client({GH_URL: {"jobs": []}})
     discover(session, config, profile, llm, settings, client=empty, now=later)
-    assert all(r[0].id != job.id for r in ranked_matches(session, now=later))
+    assert all(r[0].id != job.id for r in ranked_matches(session, limit=ALL, now=later))
 
 
 def test_gemini_embed_falls_back_when_a_batch_comes_back_combined():

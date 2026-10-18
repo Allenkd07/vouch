@@ -1,9 +1,9 @@
 """Job description -> structured requirements, each backed by a verbatim quote from the posting."""
 
 import re
-from typing import Literal
+from typing import Literal, get_args
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from vouch.llm import LLM
 
@@ -31,6 +31,16 @@ class Requirement(BaseModel):
     must_have: bool
     weight: int = Field(ge=1, le=3, description="3 = core to the role, 2 = important, 1 = minor")
     quote: str = Field(description="Exact phrase copied from the posting that states this")
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _known_category(cls, value: object) -> object:
+        """The model sometimes invents a category ("skill", "knowledge"). Treat those as
+        "practice", which the fit score leaves unchecked rather than guessing."""
+        if not isinstance(value, str):
+            return value
+        name = re.sub(r"[\s-]+", "_", value.strip().lower())
+        return name if name in get_args(Category) else "practice"
 
 
 class JobAnalysis(BaseModel):
@@ -85,6 +95,21 @@ class BatchItem(BaseModel):
 
 class BatchAnalysis(BaseModel):
     items: list[BatchItem]
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def _drop_invalid_items(cls, value: object) -> object:
+        """One malformed posting shouldn't discard the rest of the batch: it's left out, like a
+        posting the model skipped, and retried next run."""
+        if not isinstance(value, list):
+            return value
+        kept = []
+        for item in value:
+            try:
+                kept.append(BatchItem.model_validate(item))
+            except ValidationError:
+                continue
+        return kept
 
 
 BATCH_SYSTEM = (
