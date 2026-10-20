@@ -426,7 +426,7 @@ def test_gemini_retries_a_timed_out_request_once():
     import httpx
     from google import genai
 
-    from vouch.llm import GeminiLLM, LLMError
+    from vouch.llm import GeminiLLM, LLMError, Usage
     from vouch.tailoring.verify import Verdicts
 
     def gemini(replies):
@@ -437,13 +437,53 @@ def test_gemini_retries_a_timed_out_request_once():
             return SimpleNamespace(text=reply)
 
         llm = object.__new__(GeminiLLM)
-        llm._genai, llm._model = genai, "m"
+        llm._genai, llm._model, llm.usage = genai, "m", Usage("m")
         llm._client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
         return llm
 
     assert gemini([None, '{"verdicts": []}']).generate_json("p", Verdicts).verdicts == []
     with pytest.raises(LLMError, match="did not answer"):
         gemini([None, None]).generate_json("p", Verdicts)
+
+
+def test_gemini_counts_tokens_and_sets_the_thinking_level():
+    from types import SimpleNamespace
+
+    from google import genai
+
+    from vouch.llm import GeminiLLM, Usage
+    from vouch.tailoring.verify import Verdicts
+
+    configs = []
+    replies = ["not json", '{"verdicts": []}']  # the invalid reply is retried, and billed
+
+    def generate_content(model, contents, config):
+        configs.append(config)
+        tokens = SimpleNamespace(
+            prompt_token_count=1_000_000,
+            cached_content_token_count=500_000,
+            candidates_token_count=100_000,
+            thoughts_token_count=None,
+        )
+        return SimpleNamespace(text=replies.pop(0), usage_metadata=tokens)
+
+    llm = object.__new__(GeminiLLM)
+    llm._genai, llm._model = genai, "gemini-3.8-flash"
+    llm.usage = Usage("gemini-3.8-flash")
+    llm._client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+
+    llm.generate_json("p", Verdicts, thinking="low")
+    assert configs[0].thinking_config.thinking_level == genai.types.ThinkingLevel.LOW
+    u = llm.usage
+    assert (u.requests, u.input, u.cached, u.output, u.thinking) == (
+        2,
+        2_000_000,
+        1_000_000,
+        200_000,
+        0,
+    )
+    assert u.cost == pytest.approx((1 + 1 * 0.1) * 1.50 + 0.2 * 7.50)  # cached at a tenth
+    assert Usage("unpriced-model").cost is None
 
 
 # --- company probe -------------------------------------------------------------------------------

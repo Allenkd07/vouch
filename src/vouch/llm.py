@@ -2,7 +2,8 @@
 
 import json
 from collections.abc import Callable
-from typing import Protocol, TypeVar
+from dataclasses import dataclass
+from typing import Literal, Protocol, TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -11,6 +12,57 @@ from vouch.config import Role, Settings
 
 T = TypeVar("T", bound=BaseModel)
 TIMEOUT_MS = 240_000  # per request; a Pro judge call with thinking takes a minute or two
+# How much a Gemini 3 model reasons before answering; None leaves the model's default (high).
+Thinking = Literal["minimal", "low", "medium", "high"]
+
+# USD per 1M tokens (input, output) on Vertex AI's global endpoint, prompts up to 200k tokens,
+# as of 2026-10; thinking tokens are billed as output. Check
+# https://cloud.google.com/vertex-ai/generative-ai/pricing when changing models; a model missing
+# here is reported in tokens only.
+PRICES: dict[str, tuple[float, float]] = {
+    # Billed at this rate; the advertised 0.75 / 3.75 (until 2026-12-31) is a 50% credit issued
+    # the next month, so spend caps and budgets see the full price.
+    "gemini-3.8-flash": (1.50, 7.50),
+    "gemini-3.5-flash-lite": (0.30, 2.50),
+    "gemini-3.1-pro-preview": (2.00, 12.00),
+}
+CACHED_INPUT = 0.1  # implicitly cached prompt tokens cost a tenth of the input price
+
+
+@dataclass
+class Usage:
+    """Tokens one model used in this process."""
+
+    model: str
+    requests: int = 0
+    input: int = 0  # includes the cached tokens
+    cached: int = 0
+    output: int = 0
+    thinking: int = 0
+
+    def add(self, metadata) -> None:
+        self.requests += 1
+        if metadata:
+            self.input += metadata.prompt_token_count or 0
+            self.cached += metadata.cached_content_token_count or 0
+            self.output += metadata.candidates_token_count or 0
+            self.thinking += metadata.thoughts_token_count or 0
+
+    @property
+    def cost(self) -> float | None:
+        """Estimated USD, or None when the model's price isn't known."""
+        if self.model not in PRICES:
+            return None
+        per_input, per_output = PRICES[self.model]
+        input_cost = (self.input - self.cached + self.cached * CACHED_INPUT) * per_input
+        return (input_cost + (self.output + self.thinking) * per_output) / 1e6
+
+    def __str__(self) -> str:
+        cost = f", ~${self.cost:.2f}" if self.cost is not None else ", price unknown"
+        return (
+            f"{self.model}: {self.requests} requests, {self.input:,} in ({self.cached:,} cached), "
+            f"{self.output:,} out + {self.thinking:,} thinking{cost}"
+        )
 
 
 class LLMError(RuntimeError):
@@ -18,14 +70,27 @@ class LLMError(RuntimeError):
 
 
 class LLM(Protocol):
-    def generate_json(self, prompt: str, schema: type[T], *, system: str | None = None) -> T: ...
+    def generate_json(
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        system: str | None = None,
+        thinking: Thinking | None = None,
+    ) -> T: ...
 
     def embed(self, texts: list[str], dimensions: int | None = None) -> list[list[float]]: ...
 
 
-def _describe(error, model: str) -> str:
+def _describe(error, model: str, *, vertex: bool = False) -> str:
     """Short, actionable message for the common Gemini API failures."""
     code = getattr(error, "code", None)
+    if code == 429 and vertex:
+        return (
+            f"Vertex AI quota exhausted for {model} (429: {getattr(error, 'message', error)}). "
+            "Usually a per-minute limit, tightest on preview models: try again in a few "
+            "minutes, or check IAM & Admin > Quotas in the Cloud console."
+        )
     if code == 429:
         return (
             f"Gemini quota exhausted for {model} (the free tier allows ~20 requests/day per "
@@ -57,6 +122,8 @@ class GeminiLLM:
     One retry feeds the validation error back to the model.
     """
 
+    _vertex = False
+
     def __init__(self, settings: Settings, model: str, *, vertex: bool = False):
         if vertex and not settings.gcp_project:
             raise LLMError("GCP_PROJECT is not set (see .env.example)")
@@ -79,15 +146,25 @@ class GeminiLLM:
         else:
             self._client = genai.Client(api_key=settings.gemini_api_key, http_options=http_options)
         self._model = model
+        self._vertex = vertex
         self._embedding_model = settings.embedding_model
+        self.usage = Usage(model)
 
-    def generate_json(self, prompt: str, schema: type[T], *, system: str | None = None) -> T:
+    def generate_json(
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        system: str | None = None,
+        thinking: Thinking | None = None,
+    ) -> T:
         types = self._genai.types
         config = types.GenerateContentConfig(
             system_instruction=system,
             response_mime_type="application/json",
             temperature=0.2,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            thinking_config=types.ThinkingConfig(thinking_level=thinking) if thinking else None,
         )
         contents = _schema_prompt(prompt, schema)
         last_error: Exception | None = None
@@ -109,11 +186,13 @@ class GeminiLLM:
         error statuses)."""
         for attempt in range(2):
             try:
-                return self._client.models.generate_content(
+                response = self._client.models.generate_content(
                     model=self._model, contents=contents, config=config
                 )
+                self.usage.add(getattr(response, "usage_metadata", None))
+                return response
             except self._genai.errors.APIError as e:
-                raise LLMError(_describe(e, self._model)) from e
+                raise LLMError(_describe(e, self._model, vertex=self._vertex)) from e
             except httpx.TimeoutException as e:
                 if attempt:
                     raise LLMError(
@@ -131,7 +210,7 @@ class GeminiLLM:
                     model=self._embedding_model, contents=contents, config=config
                 )
             except self._genai.errors.APIError as e:
-                raise LLMError(_describe(e, self._embedding_model)) from e
+                raise LLMError(_describe(e, self._embedding_model, vertex=self._vertex)) from e
             return [_unit(list(e.values)) for e in result.embeddings]
 
         vectors: list[list[float]] = []
@@ -152,7 +231,14 @@ class FakeLLM:
         self._responder = responder
         self.prompts: list[str] = []
 
-    def generate_json(self, prompt: str, schema: type[T], *, system: str | None = None) -> T:
+    def generate_json(
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        system: str | None = None,
+        thinking: Thinking | None = None,
+    ) -> T:
         self.prompts.append(prompt)
         if self._responder is None:
             raise LLMError("FakeLLM has no responder configured")

@@ -1,3 +1,4 @@
+import atexit
 from pathlib import Path
 from typing import Annotated
 
@@ -24,7 +25,22 @@ def _deps(profile_path: Path = DEFAULT_PROFILE, search_path: Path = DEFAULT_SEAR
     """Settings, database sessions and LLMs for one command (see vouch.bootstrap)."""
     from vouch.bootstrap import build
 
-    return build(profile_path=profile_path, search_path=search_path)
+    deps = build(profile_path=profile_path, search_path=search_path)
+    # At exit, so runs that stop early (an error, Ctrl+C) still report what they spent.
+    atexit.register(_report_usage, deps)
+    return deps
+
+
+def _report_usage(deps) -> None:
+    used = [u for u in deps.usage() if u.requests]
+    if not used:
+        return
+    typer.echo("\nLLM usage:", err=True)
+    for u in used:
+        typer.echo(f"  {u}", err=True)
+    costs = [u.cost for u in used]
+    if len(used) > 1 and None not in costs:
+        typer.echo(f"  total ~${sum(costs):.2f} (estimate; Billing shows the real cost)", err=True)
 
 
 @db_app.command("check")

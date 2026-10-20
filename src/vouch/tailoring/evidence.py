@@ -66,7 +66,8 @@ def map_evidence(profile: Profile, analysis: JobAnalysis, llm: LLM) -> EvidenceM
         f"Profile bullets:\n{bullets}\n\nSkills: {', '.join(profile.skills.all())}\n\n"
         f"Education: {education or '-'}"
     )
-    result = llm.generate_json(prompt, EvidenceMap, system=SYSTEM)
+    # Low thinking: at the default this call took 4-7 minutes per job and hit Vertex 504s.
+    result = llm.generate_json(prompt, EvidenceMap, system=SYSTEM, thinking="low")
     return _clean(result, profile, analysis)
 
 

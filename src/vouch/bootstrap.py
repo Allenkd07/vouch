@@ -14,7 +14,7 @@ from vouch.db import get_sessionmaker
 from vouch.discovery.config import DEFAULT_SEARCH, SearchConfig, load_search
 from vouch.evals.labels import DEFAULT_LABELS
 from vouch.jobs.service import Scoring, load_scoring
-from vouch.llm import LLM, get_llm
+from vouch.llm import LLM, Usage, get_llm
 from vouch.profile.schema import DEFAULT_PROFILE, Profile, load_profile
 from vouch.runs.runner import TaskRunner, ThreadRunner
 
@@ -36,6 +36,10 @@ class Deps:
         if role not in self._llms:
             self._llms[role] = self.llm_factory(role)
         return self._llms[role]
+
+    def usage(self) -> list[Usage]:
+        """Tokens used by the LLMs created so far (fakes don't count any)."""
+        return [u for llm in self._llms.values() if (u := getattr(llm, "usage", None))]
 
     # The profile and search files can be edited while the web app runs, so these read them
     # fresh on every call; callers load them once per request or command.

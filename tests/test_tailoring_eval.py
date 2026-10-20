@@ -113,12 +113,12 @@ def test_run_keeps_measured_jobs_when_the_llm_fails():
     class QuotaAfterOne(ScriptedLLM):
         jobs_started = 0
 
-        def generate_json(self, prompt, schema, *, system=None):
+        def generate_json(self, prompt, schema, *, system=None, thinking=None):
             if "match job requirements" in (system or ""):  # evidence mapping starts a job
                 self.jobs_started += 1
                 if self.jobs_started > 1:
                     raise LLMError("quota exceeded")
-            return super().generate_json(prompt, schema, system=system)
+            return super().generate_json(prompt, schema, system=system, thinking=thinking)
 
     llm = QuotaAfterOne()
     run = run_eval([("a", analysis), ("gone", None), ("b", analysis)], profile, llm)
