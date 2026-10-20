@@ -3,7 +3,8 @@
 import re
 from typing import Literal, get_args
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from vouch.llm import LLM
 
@@ -28,6 +29,9 @@ class Requirement(BaseModel):
         description="Concrete skills that satisfy it; several when any one is enough "
         "(e.g. ['Java', 'Go', 'Python']); empty for non-technical requirements"
     )
+    # Set only by _placeholder_options, never by the model: offered the flag, it set it on
+    # "such as Java" and "or equivalent Java framework" too, and the ranking eval dropped.
+    or_equivalent: SkipJsonSchema[bool] = False
     must_have: bool
     weight: int = Field(ge=1, le=3, description="3 = core to the role, 2 = important, 1 = minor")
     quote: str = Field(description="Exact phrase copied from the posting that states this")
@@ -41,6 +45,19 @@ class Requirement(BaseModel):
             return value
         name = re.sub(r"[\s-]+", "_", value.strip().lower())
         return name if name in get_args(Category) else "practice"
+
+    @model_validator(mode="after")
+    def _placeholder_options(self) -> "Requirement":
+        """The model sometimes writes "or similar" as an option ("modern backend language",
+        "another systems language"), which no skill can match. Turn those into or_equivalent;
+        this also fixes analyses stored before the flag existed."""
+        named = [o for o in self.options if not PLACEHOLDER.search(o)]
+        if len(named) < len(self.options):
+            self.options, self.or_equivalent = named, True
+        return self
+
+
+PLACEHOLDER = re.compile(r"\b(another|other|any|modern|similar|equivalent|comparable)\b", re.I)
 
 
 class JobAnalysis(BaseModel):

@@ -109,6 +109,41 @@ def test_fit_matches_profile_skills_and_bullet_tools():
     assert fit.score == pytest.approx(58.9, abs=0.1)
 
 
+def test_fit_leans_on_similarity_when_few_requirements_are_checkable():
+    profile = load_profile(EXAMPLE)
+    go = _req("Go", ["Go"], weight=3)  # the only checkable requirement, and it's missed
+    thin = score_fit(profile, _analysis([go]), similarity=0.85, now=NOW)
+    # Weight 3 of the 6 needed for full evidence: (0.275*0 + 0.30*1) / 0.575
+    assert thin.score == pytest.approx(52.2, abs=0.1)
+    many = [_req(n, [n], weight=3) for n in ("Go", "Rust")]
+    assert score_fit(profile, _analysis(many), similarity=0.85, now=NOW).score == pytest.approx(
+        35.3, abs=0.1
+    )  # full evidence: (0.55*0 + 0.30*1) / 0.85
+
+
+def test_placeholder_options_become_or_equivalent():
+    req = _req("Backend languages", ["Ruby/Rails", "Go", "modern backend language"])
+    assert req.options == ["Ruby/Rails", "Go"] and req.or_equivalent
+    assert not _req("Go", ["Go"]).or_equivalent
+    # The model never sees the flag (see Requirement.or_equivalent).
+    assert "or_equivalent" not in str(JobAnalysis.model_json_schema())
+
+
+def test_or_equivalent_is_met_by_any_profile_skill_of_that_kind():
+    profile = load_profile(EXAMPLE)  # languages include Python
+    analysis = _analysis(
+        [
+            _req("Systems language", ["Go", "another systems language"]),
+            _req("Database", ["CockroachDB"], category="database"),  # no equivalent: missed
+            _req("Prompt design", ["similar tools"], category="practice"),  # not technical
+        ]
+    )
+    fit = score_fit(profile, analysis, similarity=None, now=NOW)
+    assert fit.matched == ["Systems language"]
+    assert fit.missing_must == ["Database"]
+    assert fit.unchecked == ["Prompt design"]
+
+
 def test_fit_penalises_experience_beyond_the_accepted_range():
     profile = load_profile(EXAMPLE)  # first role starts 2023-07 -> ~3.2 years at NOW
     assert years_of_experience(profile, NOW) == pytest.approx(3.24, abs=0.02)

@@ -225,7 +225,8 @@ def _print_job(job) -> None:
             continue
         typer.echo(f"\n{label}:")
         for r in reqs:
-            options = f"  [{' / '.join(r.options)}]" if r.options else ""
+            names = r.options + (["or equivalent"] if r.or_equivalent else [])
+            options = f"  [{' / '.join(names)}]" if names else ""
             flag = (
                 "  (!) quote not found in posting"
                 if r.name in result.unverified_requirements

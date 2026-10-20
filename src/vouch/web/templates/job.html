@@ -48,7 +48,7 @@
         {% set c = coverage.get(r.name) %}
         <li class="req {{ c.status if c else '' }}">
           <span class="req-name">{{ r.name }}</span>
-          {% if r.options %}<span class="req-options">{{ r.options|join(' / ') }}</span>{% endif %}
+          {% if r.options or r.or_equivalent %}<span class="req-options">{{ (r.options + (['or equivalent'] if r.or_equivalent else []))|join(' / ') }}</span>{% endif %}
           {% if c %}<span class="req-mark">{{ {'strong': 'Covered', 'education': 'Covered by education', 'partial': 'Partly covered', 'skills-only': 'Only in skills list', 'gap': 'Not covered'}[c.status] }}</span>{% endif %}
           <q>{{ r.quote }}</q>
         </li>

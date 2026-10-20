@@ -14,6 +14,10 @@ from vouch.profile.schema import Profile, normalize_name
 
 TECHNICAL = {"language", "framework", "database", "cloud", "tool"}
 SENIOR_LEVELS = {"staff", "principal", "manager"}
+# Requirement weight (1-3 each) at which a coverage figure gets its full say in the score; below
+# it, coverage counts for less and similarity for more, so one or two checkable requirements
+# can't decide a job on their own.
+FULL_EVIDENCE = {"must": 6.0, "nice": 3.0}
 
 
 class Fit(BaseModel):
@@ -37,7 +41,21 @@ def profile_vocabulary(profile: Profile) -> set[str]:
     return {normalize_name(t) for t in terms if t}
 
 
-def _matches(req: Requirement, vocab: set[str]) -> bool:
+def _same_kind_skills(profile: Profile, category: str) -> list[str]:
+    """Profile skills of a requirement's category, for "X or equivalent" requirements."""
+    skills = profile.skills
+    return {
+        "language": skills.languages,
+        "framework": skills.frameworks,
+        "database": skills.databases,
+        "cloud": skills.cloud,
+        "tool": skills.tools,
+    }.get(category, [])
+
+
+def _matches(req: Requirement, vocab: set[str], profile: Profile) -> bool:
+    if req.or_equivalent and _same_kind_skills(profile, req.category):
+        return True
     for option in req.options:
         n = normalize_name(option)
         if n and any(n == v or f" {n} " in f" {v} " or f" {v} " in f" {n} " for v in vocab):
@@ -74,11 +92,15 @@ def score_fit(
     accept_years_up_to: float = 5,
 ) -> Fit:
     vocab = profile_vocabulary(profile)
-    technical = [r for r in analysis.requirements if r.category in TECHNICAL and r.options]
+    technical = [
+        r
+        for r in analysis.requirements
+        if r.category in TECHNICAL and (r.options or r.or_equivalent)
+    ]
     unchecked = [r.name for r in analysis.requirements if r not in technical]
     must = [r for r in technical if r.must_have]
     nice = [r for r in technical if not r.must_have]
-    matched = [r.name for r in technical if _matches(r, vocab)]
+    matched = [r.name for r in technical if _matches(r, vocab, profile)]
     missing_must = [r.name for r in must if r.name not in matched]
     missing_nice = [r.name for r in nice if r.name not in matched]
 
@@ -88,11 +110,18 @@ def score_fit(
         total = sum(r.weight for r in reqs)
         return sum(r.weight for r in reqs if r.name in matched) / total
 
+    def evidence(reqs: list[Requirement], kind: str) -> float:
+        return min(1.0, sum(r.weight for r in reqs) / FULL_EVIDENCE[kind])
+
     must_cov, nice_cov = coverage(must), coverage(nice)
     sim = _scale_similarity(similarity)
 
-    # Weighted average over the parts we actually know.
-    parts = [(0.55, must_cov), (0.15, nice_cov), (0.30, sim)]
+    # Weighted average over the parts we actually know, each coverage scaled by its evidence.
+    parts = [
+        (0.55 * evidence(must, "must"), must_cov),
+        (0.15 * evidence(nice, "nice"), nice_cov),
+        (0.30, sim),
+    ]
     known = [(w, v) for w, v in parts if v is not None]
     base = 100 * sum(w * v for w, v in known) / sum(w for w, _ in known) if known else 0.0
 
