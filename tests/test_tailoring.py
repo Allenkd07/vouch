@@ -37,6 +37,28 @@ def test_deterministic_flags_added_tool_and_number():
     ]
 
 
+def test_deterministic_allows_vendor_prefix_and_plurals():
+    vocab = {"Kafka", "Apache Kafka", "Apache Spark", "API integration"}
+    source = "Published Kafka job-status events; built third-party API integrations"
+    assert deterministic_issues("Produced Apache Kafka events", source, vocab) == []
+    assert deterministic_issues("Built API integration for partners", source, vocab) == []
+    # The prefix only drops when the bare name is a tool the source names.
+    assert deterministic_issues("Ran Apache Spark jobs", source, vocab) == ["adds 'Apache Spark'"]
+
+
+def test_vocabulary_skips_options_of_non_technical_requirements(profile, analysis):
+    from fakes import _req
+
+    from vouch.tailoring.pipeline import vocabulary
+
+    roles = _req("Technical roles", options=["backend engineering", "data engineering"])
+    roles.category = "experience"
+    queues = _req("Message queues", options=["Apache Kafka"])
+    vocab = vocabulary(profile, analysis.model_copy(update={"requirements": [roles, queues]}))
+    assert "Apache Kafka" in vocab
+    assert "backend engineering" not in vocab and "data engineering" not in vocab
+
+
 def test_deterministic_allows_rewording_and_formatting():
     source = "Processed 1,200 PDFs with Python and PostgreSQL"
     ok = "Processed 1200 PDFs using PostgreSQL and Python"

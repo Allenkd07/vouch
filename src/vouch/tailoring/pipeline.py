@@ -87,11 +87,16 @@ def labelled_summary(
     )
 
 
+# Requirement categories whose options name technologies. Others hold phrases ("backend
+# engineering", "debugging") that a fair summary may use and only the LLM judge can weigh.
+TECHNICAL = {"language", "framework", "database", "cloud", "tool"}
+
+
 def vocabulary(profile: Profile, analysis: JobAnalysis) -> set[str]:
     """Named technologies the verifier watches for: anything in the profile or the posting."""
     vocab = set(profile.skills.all())
     vocab |= {t for _, b in profile.iter_bullets() for t in b.facts.tools}
-    vocab |= {o for r in analysis.requirements for o in r.options}
+    vocab |= {o for r in analysis.requirements if r.category in TECHNICAL for o in r.options}
     return {v for v in vocab if len(v) > 1}
 
 

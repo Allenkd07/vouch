@@ -36,7 +36,11 @@ Style: start with a strong past-tense verb; one sentence; at most 30 words; numb
 start more than two bullets with the same verb. If a bullet is already good for this job, return it
 nearly unchanged.
 Summary: 2 sentences, at most 50 words, built only from the profile summary and the given bullets;
-keep years of experience exactly as the profile states."""
+keep years of experience exactly as the profile states. The MUST NOT rules apply to it too.
+Name a tool only together with the work its own bullet says it did (if Airflow orchestrated quality
+checks, do not write "ETL workflows with Airflow"), and never join tools or tasks from different
+bullets into one claim (Kafka events in one bullet and pipelines in another are not "pipelines
+with Kafka"). No praise words ("proven", "passionate", "expert")."""
 
 
 def rewrite(

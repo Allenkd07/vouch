@@ -9,16 +9,31 @@ from vouch.llm import LLM
 from vouch.profile.schema import normalize_name
 
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+# A posting often names a tool with its vendor ("Apache Kafka") where the profile says "Kafka".
+_VENDOR = re.compile(r"^(apache|amazon|aws|google|microsoft|azure)\s+", re.I)
+
+
+def _words(text: str) -> str:
+    """Normalised, with plural s dropped, so "API integration" matches "API integrations"."""
+    words = normalize_name(text).split()
+    return " ".join(w[:-1] if len(w) > 3 and w.endswith("s") and w[-2] != "s" else w for w in words)
+
+
 def _contains(term: str, text: str) -> bool:
-    return f" {normalize_name(term)} " in f" {normalize_name(text)} "
+    return f" {_words(term)} " in f" {_words(text)} "
 
 
 def deterministic_issues(rewritten: str, source: str, vocabulary: set[str]) -> list[str]:
     """Tools and numbers in the rewrite must appear in the source text (bullet + its facts)."""
+    known = {_words(v) for v in vocabulary}
     issues = []
     for term in sorted(vocabulary):
-        if _contains(term, rewritten) and not _contains(term, source):
-            issues.append(f"adds {term!r}")
+        if not _contains(term, rewritten) or _contains(term, source):
+            continue
+        bare = _VENDOR.sub("", term)
+        if bare != term and _words(bare) in known and _contains(bare, source):
+            continue  # "Apache Kafka" for a source that says "Kafka"
+        issues.append(f"adds {term!r}")
     source_numbers = {n.replace(",", "") for n in _NUMBER.findall(source)}
     for n in _NUMBER.findall(rewritten):
         if n.replace(",", "") not in source_numbers:
