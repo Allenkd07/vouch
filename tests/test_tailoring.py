@@ -43,6 +43,33 @@ def test_deterministic_allows_rewording_and_formatting():
     assert deterministic_issues(ok, source, VOCAB) == []
 
 
+# --- evidence ----------------------------------------------------------------------------------
+
+
+def test_evidence_keeps_items_named_with_the_whole_prompt_line(profile, analysis):
+    from fakes import make_evidence
+
+    from vouch.llm import FakeLLM
+    from vouch.tailoring.evidence import map_evidence
+
+    def respond(prompt, schema):
+        reply = make_evidence()
+        for i in reply.items:  # as the model sometimes answers
+            i.requirement += f' (must-have, weight 3) | posting says: "{i.requirement}"'
+        reply.items[0].requirement = "Python development"  # an unknown longer name: dropped
+        return reply
+
+    emap = map_evidence(profile, analysis, FakeLLM(respond))
+    assert [i.requirement for i in emap.items] == [
+        "Python",
+        "Task queues",
+        "Mentoring",
+        "Kubernetes",
+    ]
+    assert emap.for_requirement("Python").note == "not assessed"
+    assert [b.bullet_id for b in emap.for_requirement("Task queues").bullets] == ["finlytics-2"]
+
+
 # --- selection ---------------------------------------------------------------------------------
 
 

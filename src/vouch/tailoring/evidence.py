@@ -71,11 +71,25 @@ def map_evidence(profile: Profile, analysis: JobAnalysis, llm: LLM) -> EvidenceM
     return _clean(result, profile, analysis)
 
 
+def _match(returned: str, names: list[str]) -> str | None:
+    """The requirement a returned name refers to. About one reply in three copies the whole
+    prompt line ("Python (must-have, weight 3) | posting says: ..."), so a name followed by
+    the rest of its line counts too; any other extra words ("Python development") don't."""
+    if returned in names:
+        return returned
+    starts = [n for n in names if returned.startswith((f"{n} (", f"{n} |", f"{n} options:"))]
+    return max(starts, key=len, default=None)
+
+
 def _clean(result: EvidenceMap, profile: Profile, analysis: JobAnalysis) -> EvidenceMap:
     """Drop invented bullet ids and requirements; add empty entries for any that were skipped."""
     valid_ids = {b.id for _, b in profile.iter_bullets()}
     names = [r.name for r in analysis.requirements]
-    by_name = {i.requirement: i for i in result.items if i.requirement in names}
+    by_name: dict[str, RequirementEvidence] = {}
+    for i in result.items:
+        name = _match(i.requirement, names)
+        if name and name not in by_name:
+            by_name[name] = i.model_copy(update={"requirement": name})
     items = []
     for name in names:
         item = by_name.get(name) or RequirementEvidence(
