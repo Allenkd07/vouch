@@ -4,11 +4,13 @@ import json
 from collections.abc import Callable
 from typing import Protocol, TypeVar
 
+import httpx
 from pydantic import BaseModel, ValidationError
 
 from vouch.config import Role, Settings
 
 T = TypeVar("T", bound=BaseModel)
+TIMEOUT_MS = 240_000  # per request; a Pro judge call with thinking takes a minute or two
 
 
 class LLMError(RuntimeError):
@@ -55,18 +57,27 @@ class GeminiLLM:
     One retry feeds the validation error back to the model.
     """
 
-    def __init__(self, settings: Settings, model: str):
-        if not settings.gemini_api_key:
+    def __init__(self, settings: Settings, model: str, *, vertex: bool = False):
+        if vertex and not settings.gcp_project:
+            raise LLMError("GCP_PROJECT is not set (see .env.example)")
+        if not vertex and not settings.gemini_api_key:
             raise LLMError("GEMINI_API_KEY is not set (see .env.example)")
         from google import genai
 
         self._genai = genai
         # Retry rate limits (429) and "model overloaded" (503) with exponential backoff.
         retry = genai.types.HttpRetryOptions(attempts=5, initial_delay=2.0, max_delay=30.0)
-        self._client = genai.Client(
-            api_key=settings.gemini_api_key,
-            http_options=genai.types.HttpOptions(retry_options=retry),
-        )
+        # Without a timeout one stalled response hangs the caller for good (seen on Vertex).
+        http_options = genai.types.HttpOptions(retry_options=retry, timeout=TIMEOUT_MS)
+        if vertex:
+            self._client = genai.Client(
+                vertexai=True,
+                project=settings.gcp_project,
+                location=settings.gcp_location,
+                http_options=http_options,
+            )
+        else:
+            self._client = genai.Client(api_key=settings.gemini_api_key, http_options=http_options)
         self._model = model
         self._embedding_model = settings.embedding_model
 
@@ -81,12 +92,7 @@ class GeminiLLM:
         contents = _schema_prompt(prompt, schema)
         last_error: Exception | None = None
         for _ in range(2):
-            try:
-                response = self._client.models.generate_content(
-                    model=self._model, contents=contents, config=config
-                )
-            except self._genai.errors.APIError as e:
-                raise LLMError(_describe(e, self._model)) from e
+            response = self._generate(contents, config)
             try:
                 return schema.model_validate_json(response.text or "")
             except ValidationError as e:
@@ -97,6 +103,22 @@ class GeminiLLM:
                     f"Validation errors:\n{e}\n\nReturn corrected JSON only."
                 )
         raise LLMError(f"Model output did not match {schema.__name__}: {last_error}")
+
+    def _generate(self, contents: str, config):
+        """One request; a timed-out one is tried once more (HttpRetryOptions only covers HTTP
+        error statuses)."""
+        for attempt in range(2):
+            try:
+                return self._client.models.generate_content(
+                    model=self._model, contents=contents, config=config
+                )
+            except self._genai.errors.APIError as e:
+                raise LLMError(_describe(e, self._model)) from e
+            except httpx.TimeoutException as e:
+                if attempt:
+                    raise LLMError(
+                        f"{self._model} did not answer within {TIMEOUT_MS // 1000}s, twice"
+                    ) from e
 
     def embed(self, texts: list[str], dimensions: int | None = None) -> list[list[float]]:
         """Unit-length vectors, 100 texts per request. `dimensions` truncates (the model is
@@ -148,13 +170,14 @@ class FakeLLM:
         return out
 
 
-# Settings.llm_provider -> how to build that provider's LLM for a model.
+# Settings.provider_for(role) -> how to build that provider's LLM for a model.
 PROVIDERS: dict[str, Callable[[Settings, str], LLM]] = {
     "gemini": GeminiLLM,
+    "vertex": lambda settings, model: GeminiLLM(settings, model, vertex=True),
     "fake": lambda settings, model: FakeLLM(),
 }
 
 
 def get_llm(settings: Settings, role: Role) -> LLM:
-    """The configured provider's LLM, on the model chosen for `role`."""
-    return PROVIDERS[settings.llm_provider](settings, settings.model_for(role))
+    """The provider configured for `role`, on the model chosen for it."""
+    return PROVIDERS[settings.provider_for(role)](settings, settings.model_for(role))

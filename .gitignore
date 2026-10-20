@@ -12,6 +12,8 @@ profile/profile.yaml
 profile/variants/*.yaml
 profile/search.yaml
 evals/labels.yaml
+evals/tailoring.yaml
+evals/*.jsonl
 output/
 
 # Personal planning notes (roadmap, project ideas)

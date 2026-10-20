@@ -26,7 +26,9 @@ users", "high-traffic") or responsibility that the source bullet and its facts d
 generalise into a claim the source doesn't make (e.g. do not call something "microservices" or
 "distributed" unless the source says so); use result verbs ("scaled", "optimized", "improved",
 "reduced") unless the source states that result; relabel it as a different posting keyword (RBAC is
-authorization, not "authentication"; CI is not "CI/CD"); change what the candidate did.
+authorization, not "authentication"; CI is not "CI/CD"); change what the candidate did; upgrade
+the verb ("designed"/"built" -> "architected", "engineered" or "spearheaded"; "helped" -> "led");
+add a purpose or benefit the source doesn't state ("to ensure reliability").
 When the source clearly describes something the posting names, use the posting's exact phrase
 so ATS keyword matching works (e.g. source "unit tests" -> posting "unit testing").
 Style: start with a strong past-tense verb; one sentence; at most 30 words; numbers as digits

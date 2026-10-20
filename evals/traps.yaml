@@ -1,7 +1,8 @@
 # Rewrites the honesty check must reject, and honest rewrites it must accept.
 #
 # `source` is what the verifier compares against: the bullet's text plus its facts (tools,
-# metrics, scope), joined the way tailoring/pipeline.py does. `caught_by` says which layer is
+# metrics, scope), joined the way tailoring/pipeline.py does (the independent judge gets the
+# two labelled instead). `caught_by` says which layer is
 # expected to reject the trap:
 #   deterministic: a known tool or a number that isn't in the source (free, tests/test_traps.py)
 #   judge:         everything else; needs the LLM judge (`vouch eval traps`, one request)
@@ -12,18 +13,39 @@
 vocabulary: [Python, PostgreSQL, Celery, Redis, Kafka, Kubernetes, Docker, GitHub Actions, FastAPI]
 
 sources:
-  payments: >-
-    Built a payments reconciliation service in Python processing 2M records/day
-    Python PostgreSQL Celery 2M records/day
-  ci: >-
-    Set up a CI pipeline with GitHub Actions running the test suite on every pull request
-    GitHub Actions
-  access: >-
-    Implemented role-based access control for the admin dashboard in FastAPI
-    FastAPI
-  ingest: >-
-    Wrote a PDF ingestion job that processed 1,200 documents a week
-    Python Celery 1,200 documents/week
+  payments:
+    text: Built a payments reconciliation service in Python processing 2M records/day
+    facts: [Python, PostgreSQL, Celery, 2M records/day]
+  ci:
+    text: Set up a CI pipeline with GitHub Actions running the test suite on every pull request
+    facts: [GitHub Actions]
+  access:
+    text: Implemented role-based access control for the admin dashboard in FastAPI
+    facts: [FastAPI]
+  ingest:
+    text: Wrote a PDF ingestion job that processed 1,200 documents a week
+    facts: [Python, Celery, "1,200 documents/week"]
+  backend:
+    text: Designed the FastAPI and PostgreSQL backend with Redis-backed real-time notifications
+    facts: [FastAPI, PostgreSQL, Redis]
+  # Tools named only in the facts, not in the text: a rewrite may still name them.
+  tasks:
+    text: Moved long-running job endpoints to background tasks, with separate endpoints for run status and logs
+    facts: [FastAPI]
+  storage:
+    text: Designed append-only storage for AI-generated portfolio reviews, with staleness detection
+    facts: [PostgreSQL, MCP]
+  # What a tailored summary is written from: the profile summary, the chosen bullets, skills.
+  profile:
+    text: Full stack engineer with two years of experience building Python web applications
+    bullets:
+      - text: Orchestrated nightly data-quality checks with Apache Airflow
+        facts: [Apache Airflow]
+      - text: Containerized the FastAPI backend with Docker and deployed it to AWS with Pulumi
+        facts: [Docker, FastAPI, AWS, Pulumi]
+      - text: Published job-status events to Kafka for the job tracker
+        facts: [Kafka]
+    skills: [Python, SQL, Apache Airflow, Docker, Kafka, Pulumi, Kubernetes]
 
 traps:
   - id: adds-known-tool
@@ -92,6 +114,35 @@ traps:
     source: access
     rewrite: Implemented the authentication system for the admin dashboard in FastAPI
     caught_by: judge
+  - id: inflates-verb
+    # Found by the independent judge in real tailoring runs.
+    source: backend
+    rewrite: Architected the FastAPI and PostgreSQL backend with Redis-backed real-time notifications
+    caught_by: judge
+  - id: adds-purpose
+    source: payments
+    rewrite: Built a Python payments reconciliation service processing 2M records/day to ensure accurate, reliable settlements
+    caught_by: judge
+  # Summaries: a tool attached to work it wasn't recorded for. Found by the independent
+  # judge in real tailoring runs; every word is somewhere in the profile, so a judge reading
+  # the sources run together lets them through.
+  - id: summary-moves-a-tool
+    source: profile
+    rewrite: Full stack engineer with two years of experience orchestrating ETL pipelines with Apache Airflow
+    caught_by: judge
+  - id: summary-stretches-a-tool
+    source: profile
+    rewrite: Full stack engineer with two years of experience building streaming data pipelines with Kafka
+    caught_by: judge
+  - id: summary-swaps-the-tool
+    source: profile
+    rewrite: Full stack engineer with two years of experience automating cloud infrastructure with Docker
+    caught_by: judge
+  - id: summary-uses-a-skill
+    # Kubernetes is only in the skills list.
+    source: profile
+    rewrite: Full stack engineer with two years of experience deploying services on Kubernetes
+    caught_by: judge
 
 controls:
   - id: reorders
@@ -112,3 +163,25 @@ controls:
   - id: job-wording
     source: ci
     rewrite: Automated testing on every pull request with a GitHub Actions CI pipeline
+  - id: names-a-recorded-tool
+    source: tasks
+    rewrite: Moved long-running job endpoints to FastAPI background tasks, with separate endpoints for run status and logs
+  - id: names-a-recorded-database
+    source: storage
+    rewrite: Designed append-only PostgreSQL storage for AI-generated portfolio reviews, with staleness detection
+  - id: summary-combines-bullets
+    source: profile
+    rewrite: Full stack engineer with two years of experience shipping a Dockerized FastAPI backend on AWS with Pulumi, Kafka job-status events and Airflow data-quality checks
+  - id: summary-names-skills
+    source: profile
+    rewrite: Full stack engineer with two years of experience building Python web applications; skills include SQL and Kubernetes
+  # Wording the independent judge rejected in real runs that a recruiter reads the same way.
+  - id: pluralises
+    source: ci
+    rewrite: Set up CI pipelines with GitHub Actions running the test suite on every pull request
+  - id: names-what-it-is
+    source: backend
+    rewrite: Designed the FastAPI and PostgreSQL backend APIs with Redis-backed real-time notifications
+  - id: summary-adds-praise
+    source: profile
+    rewrite: Full stack engineer with two years of experience building robust Python web applications

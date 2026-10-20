@@ -420,6 +420,32 @@ def test_gemini_embed_falls_back_when_a_batch_comes_back_combined():
     assert calls == [["a", "b", "c"], "a", "b", "c"]
 
 
+def test_gemini_retries_a_timed_out_request_once():
+    from types import SimpleNamespace
+
+    import httpx
+    from google import genai
+
+    from vouch.llm import GeminiLLM, LLMError
+    from vouch.tailoring.verify import Verdicts
+
+    def gemini(replies):
+        def generate_content(model, contents, config):
+            reply = replies.pop(0)
+            if reply is None:
+                raise httpx.ReadTimeout("stalled")
+            return SimpleNamespace(text=reply)
+
+        llm = object.__new__(GeminiLLM)
+        llm._genai, llm._model = genai, "m"
+        llm._client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+        return llm
+
+    assert gemini([None, '{"verdicts": []}']).generate_json("p", Verdicts).verdicts == []
+    with pytest.raises(LLMError, match="did not answer"):
+        gemini([None, None]).generate_json("p", Verdicts)
+
+
 # --- company probe -------------------------------------------------------------------------------
 
 

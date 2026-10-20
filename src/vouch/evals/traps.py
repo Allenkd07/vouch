@@ -10,6 +10,7 @@ import yaml
 from pydantic import BaseModel
 
 from vouch.llm import LLM
+from vouch.tailoring.pipeline import labelled, labelled_summary
 from vouch.tailoring.verify import deterministic_issues, judge
 
 DEFAULT_TRAPS = Path("evals/traps.yaml")
@@ -22,14 +23,39 @@ class Case(BaseModel):
     caught_by: Literal["deterministic", "judge"] | None = None  # None for controls
 
 
+class Bullet(BaseModel):
+    text: str
+    facts: list[str] = []
+
+
+class Source(Bullet):
+    """A bullet; or, with `bullets`, what a summary is written from (`text` is then the
+    profile summary)."""
+
+    bullets: list[Bullet] = []
+    skills: list[str] = []
+
+
 class TrapSet(BaseModel):
     vocabulary: list[str]
-    sources: dict[str, str]
+    sources: dict[str, Source]
     traps: list[Case]
     controls: list[Case]
 
     def source(self, case: Case) -> str:
-        return " ".join(self.sources[case.source].split())
+        """Run together, as the deterministic check sees it (pipeline.source_text and
+        summary_source)."""
+        s = self.sources[case.source]
+        parts = [s.text, *s.facts, *(p for b in s.bullets for p in [b.text, *b.facts]), *s.skills]
+        return " ".join(parts)
+
+    def labelled_source(self, case: Case) -> str:
+        """With its parts named, as the LLM judges see it (pipeline.labelled and
+        labelled_summary)."""
+        s = self.sources[case.source]
+        if s.bullets:
+            return labelled_summary(s.text, [(b.text, b.facts) for b in s.bullets], s.skills)
+        return labelled(s.text, s.facts)
 
 
 def load_traps(path: Path = DEFAULT_TRAPS) -> TrapSet:
@@ -40,7 +66,7 @@ def load_traps(path: Path = DEFAULT_TRAPS) -> TrapSet:
 class Outcome:
     case: Case
     is_trap: bool
-    rejected_by: Literal["deterministic", "judge"] | None
+    rejected_by: Literal["deterministic", "judge", "independent"] | None
     reason: str
 
     @property
@@ -71,4 +97,19 @@ def check_all(traps: TrapSet, llm: LLM) -> list[Outcome]:
         verdict = verdicts[o.case.id]
         if not verdict.supported:
             o.rejected_by, o.reason = "judge", verdict.issue or "unsupported"
+    return outcomes
+
+
+def check_independent(traps: TrapSet, llm: LLM) -> list[Outcome]:
+    """Calibrate the tailoring eval's independent judge: it sees every case on its own (no
+    deterministic layer in front), so this is its own catch and false-alarm rate."""
+    from vouch.evals.faithfulness import audit
+
+    cases = [(True, c) for c in traps.traps] + [(False, c) for c in traps.controls]
+    audits = audit([(c.id, traps.labelled_source(c), c.rewrite) for _, c in cases], llm)
+    outcomes = []
+    for is_trap, case in cases:
+        bad = audits[case.id].unsupported
+        reason = "; ".join(f"{c.claim}: {c.why}" for c in bad)
+        outcomes.append(Outcome(case, is_trap, "independent" if bad else None, reason))
     return outcomes

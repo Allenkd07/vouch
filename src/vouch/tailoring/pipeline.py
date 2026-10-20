@@ -49,12 +49,45 @@ class TailorResult:
     evidence: EvidenceMap
 
 
-def _source_text(b: Bullet) -> str:
+def bullet_facts(b: Bullet) -> list[str]:
     f = b.facts
-    return " ".join([b.text, *f.tools, *f.metrics, *f.scope])
+    return [*f.tools, *f.metrics, *f.scope]
 
 
-def _vocabulary(profile: Profile, analysis: JobAnalysis) -> set[str]:
+def source_text(b: Bullet) -> str:
+    """What a rewrite of `b` may draw on, run together for the deterministic check."""
+    return " ".join([b.text, *bullet_facts(b)])
+
+
+def summary_source(profile: Profile, chosen: list[Bullet]) -> str:
+    """What the tailored summary may draw on: the profile summary, chosen bullets and skills."""
+    return " ".join(
+        [profile.summary or "", *(source_text(b) for b in chosen), *profile.skills.all()]
+    )
+
+
+# The same material with its parts named, for the LLM judges. Run together, a bullet's tools
+# read like a skills list, and a summary's sources blur, so a tool recorded for one piece of
+# work seems to back a claim about another ("Airflow" + "pipelines" -> "ETL with Airflow").
+def labelled(text: str, facts: list[str]) -> str:
+    return f"{text}\nFacts recorded for this work: {', '.join(facts)}" if facts else text
+
+
+def labelled_summary(
+    summary: str | None, bullets: list[tuple[str, list[str]]], skills: list[str]
+) -> str:
+    """bullets: (text, facts) for each bullet the summary may draw on."""
+    return "\n".join(
+        [
+            f"Profile summary: {summary or '(none)'}",
+            "Resume bullets (each tool or number backs only the work in its own bullet):",
+            *(f"- {labelled(text, facts)}" for text, facts in bullets),
+            f"Skills list (knowing a skill, not using it for any work above): {', '.join(skills)}",
+        ]
+    )
+
+
+def vocabulary(profile: Profile, analysis: JobAnalysis) -> set[str]:
     """Named technologies the verifier watches for: anything in the profile or the posting."""
     vocab = set(profile.skills.all())
     vocab |= {t for _, b in profile.iter_bullets() for t in b.facts.tools}
@@ -75,14 +108,14 @@ def tailor(
     selection = select_bullets(profile, analysis, evidence, budget)
     chosen = [bullets[i] for i in selection.bullet_ids()]
 
-    vocab = _vocabulary(profile, analysis)
-    summary_source = " ".join(
-        [profile.summary or "", *(_source_text(b) for b in chosen), *profile.skills.all()]
-    )
+    vocab = vocabulary(profile, analysis)
+    summary_from = summary_source(profile, chosen)
 
     # Rewrite, verify, and give rejected items one retry with the reviewer's reasons.
     rewrites = rewrite(chosen, selection.supports, profile, analysis, llm)
-    accepted, rejected = _verify(chosen, rewrites, summary_source, vocab, llm, check_summary=True)
+    accepted, rejected = verify_rewrites(
+        chosen, rewrites, summary_from, vocab, llm, check_summary=True
+    )
     if rejected:
         retry_bullets = [bullets[i] for i in rejected if i in bullets]
         retry = rewrite(
@@ -94,8 +127,8 @@ def tailor(
             with_summary="summary" in rejected,
             feedback={i: "; ".join(reasons) for i, reasons in rejected.items()},
         )
-        accepted_retry, rejected = _verify(
-            retry_bullets, retry, summary_source, vocab, llm, check_summary="summary" in rejected
+        accepted_retry, rejected = verify_rewrites(
+            retry_bullets, retry, summary_from, vocab, llm, check_summary="summary" in rejected
         )
         accepted |= accepted_retry
     fallbacks = rejected
@@ -120,7 +153,7 @@ def tailor(
     return TailorResult(doc=doc, report=report, pdf=pdf, evidence=evidence)
 
 
-def _verify(
+def verify_rewrites(
     chosen: list[Bullet],
     rewrites: Rewrites,
     summary_source: str,
@@ -141,10 +174,10 @@ def _verify(
             rejected[b.id] = ["no rewrite returned"]
         elif new == b.text:
             accepted[b.id] = new
-        elif issues := deterministic_issues(new, _source_text(b), vocab):
+        elif issues := deterministic_issues(new, source_text(b), vocab):
             rejected[b.id] = issues
         else:
-            to_judge.append((b.id, _source_text(b), new))
+            to_judge.append((b.id, source_text(b), new))
     if check_summary:
         summary = (rewrites.summary or "").strip()
         if not summary:

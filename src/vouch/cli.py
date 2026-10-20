@@ -383,13 +383,22 @@ app.add_typer(eval_app, name="eval")
 def eval_traps(
     file: Annotated[Path, typer.Option(exists=True)] = Path("evals/traps.yaml"),
     free: Annotated[bool, typer.Option(help="Deterministic check only (no LLM request)")] = False,
+    independent: Annotated[
+        bool, typer.Option(help="Calibrate the tailoring eval's independent judge instead")
+    ] = False,
 ) -> None:
     """Fabricated rewrites the honesty check must reject, and honest ones it must accept."""
-    from vouch.evals.traps import check_all, check_deterministic, load_traps
+    from vouch.evals.traps import check_all, check_deterministic, check_independent, load_traps
 
     traps = load_traps(file)
     if free:
         outcomes = check_deterministic(traps)
+    elif independent:
+        deps = _deps()
+        typer.echo(
+            f"Auditing with the independent judge, {deps.settings.judge_model} (1 request)..."
+        )
+        outcomes = check_independent(traps, deps.llm("judge"))
     else:
         deps = _deps()
         typer.echo(f"Judging with {deps.settings.llm_model} (1 request)...")
@@ -408,10 +417,16 @@ def eval_traps(
     traps_total = sum(o.is_trap for o in outcomes)
     false_alarms = [o for o in outcomes if not o.is_trap and o.rejected_by]
     by_judge = sum(o.rejected_by == "judge" for o in caught)
-    typer.echo(
-        f"\nTraps caught: {len(caught)}/{traps_total} ({by_judge} only by the judge"
+    layers = (
+        ""
+        if independent
+        else f" ({by_judge} only by the judge"
         + (f", {len(left)} not checked without it" if free else "")
-        + f"); honest rewrites rejected: {len(false_alarms)}/{len(outcomes) - traps_total}"
+        + ")"
+    )
+    typer.echo(
+        f"\nTraps caught: {len(caught)}/{traps_total}{layers}; "
+        f"honest rewrites rejected: {len(false_alarms)}/{len(outcomes) - traps_total}"
     )
     if any(not o.correct and o.case.id not in left for o in outcomes):
         raise typer.Exit(1)
@@ -452,6 +467,207 @@ def eval_ranking(
     if report.bad_reasons:
         reasons = ", ".join(f"{r} ({n})" for r, n in report.bad_reasons.most_common())
         typer.echo(f"\nWhy the top {k}'s weaker jobs fall short: {reasons}")
+
+
+def _eval_jobs(deps, file: Path, limit: int | None, skip: int = 0):
+    """(url, analysis or None) for `limit` jobs of an eval set, after the first `skip`."""
+    from vouch.evals.tailoring import load_set
+    from vouch.jobs import repository as jobs_db
+    from vouch.jobs.service import job_analysis
+
+    urls = load_set(file).jobs[skip:][:limit]
+    with deps.sessions() as session:
+        found = jobs_db.by_urls(session, urls)
+        todo = []
+        for u in urls:
+            analysis = job_analysis(found[u]) if u in found else None
+            if analysis and not analysis.company:  # the board's company name, as on job pages
+                analysis = analysis.model_copy(update={"company": found[u].company})
+            todo.append((u, analysis))
+    return todo
+
+
+@eval_app.command("tailoring")
+def eval_tailoring(
+    jobs: Annotated[int | None, typer.Option(help="Only the first N jobs (saves quota)")] = None,
+    pages: Annotated[int, typer.Option(help="Page limit")] = 1,
+    judge: Annotated[bool, typer.Option(help="Audit changed text with the judge model")] = True,
+    file: Annotated[Path, typer.Option(exists=True)] = Path("evals/tailoring.yaml"),
+) -> None:
+    """Tailor resumes for the fixed job set and measure coverage, rejected rewrites, keywords
+    and (with the independent judge) fabrications that got past the honesty check. About 10-20
+    LLM requests per job, plus one judge request; no resume versions are saved."""
+    from vouch.evals.tailoring import run_eval
+
+    deps = _deps()
+    todo = _eval_jobs(deps, file, jobs)
+    settings = deps.settings
+    typer.echo(
+        f"Tailoring {len(todo)} job(s) with {settings.llm_model}"
+        + (
+            f", judged by {settings.judge_model} ({settings.provider_for('judge')})"
+            if judge
+            else ""
+        )
+        + "..."
+    )
+    run = run_eval(
+        todo,
+        deps.profile(),
+        deps.llm("tailoring"),
+        judge=deps.llm("judge") if judge else None,
+        max_pages=pages,
+        log=typer.echo,
+    )
+
+    def pct(value: float | None) -> str:
+        return f"{value:.0%}" if value is not None else "-"
+
+    typer.echo(
+        f"\n{'job':<46}{'must':>6}{'could':>7}{'rejected':>10}{'skipped':>9}{'keywords':>11}"
+        f"{'pages':>7}"
+    )
+    for s in run.scores:
+        name = f"{s.company} | {s.title}"[:44]
+        rejected = f"{s.rejected}/{s.attempted}"
+        keywords = f"{s.keywords_before}->{s.keywords_after}/{s.keywords_total}"
+        over = "!" if s.pages > s.max_pages else ""
+        typer.echo(
+            f"{name:<46}{pct(s.must_coverage):>6}{pct(s.must_possible):>7}"
+            f"{rejected:>10}{s.not_returned:>9}{keywords:>11}{s.pages:>6}{over}"
+        )
+    if run.scores:
+        gained = sum(s.keywords_after - s.keywords_before for s in run.scores)
+        total = sum(s.keywords_total for s in run.scores)
+        typer.echo(
+            f"\n{len(run.scores)} job(s): must-have coverage {pct(run.mean('must_coverage'))} "
+            f"(profile could reach {pct(run.mean('must_possible'))}); "
+            f"rewrites rejected {pct(run.rejection_rate)}, "
+            f"skipped {sum(s.not_returned for s in run.scores)}; "
+            f"keywords +{gained} of {total}; "
+            f"over the page limit: {sum(s.pages > s.max_pages for s in run.scores)}"
+        )
+    if run.audited is not None:
+        found = [(s, f) for s in run.scores for f in s.fabrications]
+        typer.echo(
+            f"\nIndependent judge: {len(found)} of {run.audited} changed text(s) "
+            "claim something the source doesn't"
+        )
+        for s, (item_id, text, claims) in found:
+            typer.echo(f"  {s.company} | {s.title} [{item_id}]\n    {text}")
+            for c in claims:
+                typer.echo(f"    - {c.claim}: {c.why}")
+    left_off = [(s, r) for s in run.scores for r in s.left_off]
+    if left_off:
+        typer.echo("\nMust-haves your profile backs but the page left off:")
+        for s, r in left_off:
+            typer.echo(f"  {s.company} | {s.title}: {r}")
+    for url in run.missing:
+        typer.echo(f"Not in the database or not analysed: {url}", err=True)
+    if run.stopped:
+        typer.echo(f"Stopped early: {run.stopped}", err=True)
+        raise typer.Exit(1)
+
+
+@eval_app.command("summaries")
+def eval_summaries(
+    samples: Annotated[int, typer.Option(help="First drafts per job")] = 3,
+    jobs: Annotated[int | None, typer.Option(help="Only N jobs (saves quota)")] = None,
+    skip: Annotated[int, typer.Option(help="Start after the first N jobs (run in batches)")] = 0,
+    file: Annotated[Path, typer.Option(exists=True)] = Path("evals/tailoring.yaml"),
+    save: Annotated[
+        Path | None, typer.Option(help="Append each job's drafts to this file (JSON lines)")
+    ] = None,
+    saved: Annotated[
+        Path | None, typer.Option(exists=True, help="Report on drafts saved earlier instead")
+    ] = None,
+    rejudge: Annotated[
+        bool, typer.Option(help="With --saved: audit the saved drafts again")
+    ] = False,
+    same_bullets: Annotated[
+        Path | None,
+        typer.Option(exists=True, help="Reuse the bullet selections saved in this file"),
+    ] = None,
+    show: Annotated[
+        bool, typer.Option(help="Print every draft, not only the flagged ones")
+    ] = False,
+) -> None:
+    """How often first-draft summaries claim something the bullets don't back, and how many of
+    those the honesty check catches. Several drafts per job, since one run is noise. About 2
+    requests per draft plus 2 per job; no resume versions are saved. --saved reports on
+    earlier drafts for free (--rejudge: one judge request per job)."""
+    from vouch.evals.tailoring import SummaryRun, load_drafts, rescore, sample_summaries
+
+    def report(j) -> None:  # under the job's "Sampling..." line, as it finishes
+        if save:
+            with save.open("a", encoding="utf-8") as f:
+                f.write(j.model_dump_json() + "\n")
+        if saved and not rejudge:
+            typer.echo(f"{j.company} | {j.title}")
+        for d in j.drafts:
+            if not d.text:
+                typer.echo("  --    no summary returned")
+                continue
+            if not (show or d.unsupported or d.rejected or d.minor):
+                continue
+            # judge flagged: ESCAPE (check passed it) or caught; judge clean: reject or clean
+            if d.unsupported:
+                mark = "caught" if d.rejected else "ESCAPE"
+            else:
+                mark = "reject" if d.rejected else "clean"
+            typer.echo(f"  {mark:<6} {d.text}")
+            if d.rejected:
+                typer.echo(f"         check: {d.rejected}")
+            for c in d.unsupported:
+                typer.echo(f"         judge: {c.claim}: {c.why}")
+            for c in d.minor:
+                typer.echo(f"         minor: {c.claim}: {c.why}")
+
+    deps = _deps()
+    settings = deps.settings
+    judged_by = f"judged by {settings.judge_model} ({settings.provider_for('judge')})"
+    if saved:
+        earlier = load_drafts(saved)[skip:][:jobs]
+        if rejudge:
+            typer.echo(f"Re-auditing {len(earlier)} job(s)' saved drafts, {judged_by}...")
+            run = rescore(earlier, deps.llm("judge"), log=typer.echo, on_job=report)
+        else:
+            run = SummaryRun(jobs=earlier)
+            for j in earlier:
+                report(j)
+    else:
+        todo = _eval_jobs(deps, file, jobs, skip)
+        typer.echo(
+            f"{samples} summary draft(s) for each of {len(todo)} job(s) with "
+            f"{settings.llm_model}, {judged_by}..."
+        )
+        run = sample_summaries(
+            todo,
+            deps.profile(),
+            deps.llm("tailoring"),
+            deps.llm("judge"),
+            samples=samples,
+            log=typer.echo,
+            on_job=report,
+            selections={j.url: j for j in load_drafts(same_bullets)} if same_bullets else None,
+        )
+    drafts = run.drafts()
+    if drafts:
+        bad = [d for d in drafts if d.unsupported]
+        rejected = [d for d in drafts if d.rejected]
+        escaped = [d for d in drafts if d.escaped]
+        clean_rejected = [d for d in rejected if not d.unsupported]
+        typer.echo(
+            f"\n{len(drafts)} draft(s): {len(bad)} claim something the bullets don't back "
+            f"({len(bad) / len(drafts):.0%}); the check caught {len(bad) - len(escaped)} and "
+            f"let {len(escaped)} through; it also rejected {len(clean_rejected)} the judge "
+            f"found clean"
+        )
+    for url in run.missing:
+        typer.echo(f"Not in the database or not analysed: {url}", err=True)
+    if run.stopped:
+        typer.echo(f"Stopped early: {run.stopped}", err=True)
+        raise typer.Exit(1)
 
 
 companies_app = typer.Typer(no_args_is_help=True, help="Target companies for job discovery")

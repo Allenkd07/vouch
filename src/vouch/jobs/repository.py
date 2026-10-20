@@ -24,6 +24,10 @@ def get(session: Session, job_id: int) -> Job | None:
     return session.get(Job, job_id)
 
 
+def by_urls(session: Session, urls: list[str]) -> dict[str, Job]:
+    return {j.url: j for j in session.scalars(select(Job).where(Job.url.in_(urls)))}
+
+
 def recent(session: Session, limit: int) -> list[Job]:
     """Most recently fetched first."""
     return list(session.scalars(select(Job).order_by(Job.fetched_at.desc()).limit(limit)))

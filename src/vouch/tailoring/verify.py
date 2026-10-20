@@ -9,8 +9,6 @@ from vouch.llm import LLM
 from vouch.profile.schema import normalize_name
 
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
-
-
 def _contains(term: str, text: str) -> bool:
     return f" {normalize_name(term)} " in f" {normalize_name(text)} "
 
@@ -42,10 +40,13 @@ JUDGE_SYSTEM = """You audit tailored resume text for honesty. For each item, com
 REWRITTEN text with its SOURCE. supported = false if the rewrite claims anything the source does
 not state or directly imply: a new technology, number, scale, scope, responsibility, outcome,
 seniority, or a broader characterisation (e.g. "microservices", "distributed", "high-traffic",
-"led") not in the source. Rewording, reordering, shortening and synonyms for the same thing are
-fine. Also unsupported: a compound term where only part is evidenced (e.g. "CI/CD" when only
-CI is shown, "full ownership" when only building is shown), and relabeling one thing as a
-different one (e.g. calling RBAC/authorization "authentication"). A skills list alone does not
+"led") not in the source. Also unsupported: a stronger verb than the source's ("designed" or
+"built" -> "architected", "built" -> "engineered" or "spearheaded", "helped" -> "led"), and an
+added purpose or benefit ("to ensure reliability", "enabling faster releases") the source doesn't
+state. Rewording, reordering, shortening and synonyms for the same thing are fine. Also
+unsupported: a compound term where only part is evidenced (e.g. "CI/CD" when only CI is shown,
+"full ownership" when only building is shown), and relabeling one thing as a different one
+(e.g. calling RBAC/authorization "authentication"). A skills list alone does not
 support a claim of experience. issue: short reason if unsupported, else empty. Return one
 verdict per id."""
 
