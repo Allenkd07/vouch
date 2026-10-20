@@ -19,6 +19,9 @@ job_app = typer.Typer(no_args_is_help=True, help="Jobs: add from a link, list, s
 app.add_typer(job_app, name="job")
 
 ProfilePath = Annotated[Path, typer.Argument(exists=True)]
+SaveReport = Annotated[
+    bool, typer.Option(help="Save the numbers to evals/reports/ and compare with the last run")
+]
 
 
 def _deps(profile_path: Path = DEFAULT_PROFILE, search_path: Path = DEFAULT_SEARCH):
@@ -452,6 +455,7 @@ def eval_traps(
 def eval_ranking(
     k: Annotated[int, typer.Option(help="Cut-off for precision@k and NDCG@k")] = 10,
     file: Annotated[Path, typer.Option()] = Path("evals/labels.yaml"),
+    save_report: SaveReport = True,
 ) -> None:
     """How well the fit score ranks the jobs you labelled on the /label page (no LLM calls)."""
     from vouch.evals.labels import load_labels
@@ -483,6 +487,31 @@ def eval_ranking(
     if report.bad_reasons:
         reasons = ", ".join(f"{r} ({n})" for r, n in report.bad_reasons.most_common())
         typer.echo(f"\nWhy the top {k}'s weaker jobs fall short: {reasons}")
+    if save_report:
+        from vouch.evals.reports import ranking_metrics
+
+        scope = f"{file.as_posix()}, k={k}"
+        _save_report(_deps(), "ranking", scope, ranking_metrics(report), models={})
+
+
+def _save_report(deps, eval: str, scope: str, metrics, models: dict[str, str]) -> None:
+    """Compare with the last saved report of the same scope, then save this one. `models`
+    is empty for evals that make no LLM calls, which then leave prompts out too."""
+    from vouch.evals import reports
+
+    config = dict(models)
+    if models:
+        config["prompts"] = reports.prompt_version()
+    config["commit"] = reports.git_commit()
+    costs = [u.cost for u in deps.usage() if u.requests]
+    cost = sum(costs) if costs and None not in costs else None
+    report = reports.new_report(eval, scope, metrics, config, cost)
+    if previous := reports.latest(eval, scope):
+        path, old = previous
+        typer.echo(f"\nCompared with {path.name} (commit {old.config.get('commit', '?')}):")
+        for line in reports.compare(report, old):
+            typer.echo(line)
+    typer.echo(f"\nSaved {reports.save(report).as_posix()}")
 
 
 def _eval_jobs(deps, file: Path, limit: int | None, skip: int = 0):
@@ -509,6 +538,7 @@ def eval_tailoring(
     pages: Annotated[int, typer.Option(help="Page limit")] = 1,
     judge: Annotated[bool, typer.Option(help="Audit changed text with the judge model")] = True,
     file: Annotated[Path, typer.Option(exists=True)] = Path("evals/tailoring.yaml"),
+    save_report: SaveReport = True,
 ) -> None:
     """Tailor resumes for the fixed job set and measure coverage, rejected rewrites, keywords
     and (with the independent judge) fabrications that got past the honesty check. About 10-20
@@ -578,6 +608,16 @@ def eval_tailoring(
         typer.echo("\nMust-haves your profile backs but the page left off:")
         for s, r in left_off:
             typer.echo(f"  {s.company} | {s.title}: {r}")
+    if save_report and run.scores and not run.stopped:
+        from vouch.evals.reports import tailoring_metrics
+
+        scope = f"{file.as_posix()}, {len(run.scores)} jobs, {pages} page(s)" + (
+            ", judged" if judge else ""
+        )
+        models = {"model": settings.llm_model}
+        if judge:
+            models["judge"] = settings.judge_model
+        _save_report(deps, "tailoring", scope, tailoring_metrics(run), models)
     for url in run.missing:
         typer.echo(f"Not in the database or not analysed: {url}", err=True)
     if run.stopped:
@@ -607,6 +647,7 @@ def eval_summaries(
     show: Annotated[
         bool, typer.Option(help="Print every draft, not only the flagged ones")
     ] = False,
+    save_report: SaveReport = True,
 ) -> None:
     """How often first-draft summaries claim something the bullets don't back, and how many of
     those the honesty check catches. Several drafts per job, since one run is noise. About 2
@@ -679,6 +720,18 @@ def eval_summaries(
             f"let {len(escaped)} through; it also rejected {len(clean_rejected)} the judge "
             f"found clean"
         )
+    # A plain --saved report repeats an earlier run; with --rejudge the judge's verdicts are new.
+    if save_report and drafts and not run.stopped and (rejudge or not saved):
+        from vouch.evals.reports import summary_metrics
+
+        # --same-bullets leaves the scope as is: its selections are the earlier run's, so the
+        # two compare directly (before/after a prompt change).
+        first = skip + 1
+        scope = f"{file.as_posix()}, jobs {first}-{skip + len(run.jobs)}, {samples} samples"
+        if saved:  # the saved drafts' own sample count, whatever --samples says
+            scope = f"{file.as_posix()}, jobs {first}-{skip + len(run.jobs)}, saved drafts"
+        models = {"model": settings.llm_model, "judge": settings.judge_model}
+        _save_report(deps, "summaries", scope, summary_metrics(run), models)
     for url in run.missing:
         typer.echo(f"Not in the database or not analysed: {url}", err=True)
     if run.stopped:

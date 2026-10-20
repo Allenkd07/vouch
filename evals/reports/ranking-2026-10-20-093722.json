@@ -1,0 +1,36 @@
+{
+  "eval": "ranking",
+  "created": "2026-10-20T09:37:22.550867Z",
+  "scope": "evals/labels.yaml, k=10",
+  "config": {
+    "commit": "91bf6ba+changes"
+  },
+  "metrics": {
+    "labelled": {
+      "label": "labelled jobs",
+      "value": 155,
+      "percent": false
+    },
+    "fit_precision": {
+      "label": "fit precision@10",
+      "value": 0.8,
+      "percent": false
+    },
+    "fit_ndcg": {
+      "label": "fit NDCG@10",
+      "value": 0.8911742177248004,
+      "percent": false
+    },
+    "similarity_precision": {
+      "label": "similarity precision@10",
+      "value": 0.3,
+      "percent": false
+    },
+    "similarity_ndcg": {
+      "label": "similarity NDCG@10",
+      "value": 0.4564491613553446,
+      "percent": false
+    }
+  },
+  "cost_usd": null
+}
