@@ -58,7 +58,10 @@ seniority, or a broader characterisation (e.g. "microservices", "distributed", "
 "led") not in the source. Also unsupported: a stronger verb than the source's ("designed" or
 "built" -> "architected", "built" -> "engineered" or "spearheaded", "helped" -> "led"), and an
 added purpose or benefit ("to ensure reliability", "enabling faster releases") the source doesn't
-state. Rewording, reordering, shortening and synonyms for the same thing are fine. Also
+state. Rewording, reordering, shortening and synonyms for the same thing are fine, and so is
+the general name for the kind of work the source describes, with the same tool and no new task
+("orchestrated quality checks with Airflow" -> "workflow automation with Airflow"; but "ETL
+pipelines with Airflow" names different work, so unsupported). Also
 unsupported: a compound term where only part is evidenced (e.g. "CI/CD" when only CI is shown,
 "full ownership" when only building is shown), and relabeling one thing as a different one
 (e.g. calling RBAC/authorization "authentication"). A skills list alone does not

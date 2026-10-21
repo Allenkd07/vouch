@@ -48,6 +48,17 @@ class Usage:
             self.output += metadata.candidates_token_count or 0
             self.thinking += metadata.thoughts_token_count or 0
 
+    def __add__(self, other: "Usage") -> "Usage":
+        """The same model's tokens from two LLM instances."""
+        return Usage(
+            self.model,
+            self.requests + other.requests,
+            self.input + other.input,
+            self.cached + other.cached,
+            self.output + other.output,
+            self.thinking + other.thinking,
+        )
+
     @property
     def cost(self) -> float | None:
         """Estimated USD, or None when the model's price isn't known."""

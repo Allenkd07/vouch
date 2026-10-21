@@ -185,3 +185,8 @@ controls:
   - id: summary-adds-praise
     source: profile
     rewrite: Full stack engineer with two years of experience building robust Python web applications
+  - id: summary-names-the-category
+    # Airflow orchestrated the checks, and orchestrating is workflow automation: the same work
+    # under its general name. Compare summary-moves-a-tool, where ETL is different work.
+    source: profile
+    rewrite: Full stack engineer with two years of experience in workflow automation with Apache Airflow

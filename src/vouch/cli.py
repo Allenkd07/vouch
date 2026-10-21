@@ -24,18 +24,34 @@ SaveReport = Annotated[
 ]
 
 
+# Every Deps built in this process: `eval all` runs several commands, each with its own.
+_built: list = []
+
+
 def _deps(profile_path: Path = DEFAULT_PROFILE, search_path: Path = DEFAULT_SEARCH):
     """Settings, database sessions and LLMs for one command (see vouch.bootstrap)."""
     from vouch.bootstrap import build
 
     deps = build(profile_path=profile_path, search_path=search_path)
-    # At exit, so runs that stop early (an error, Ctrl+C) still report what they spent.
-    atexit.register(_report_usage, deps)
+    if not _built:
+        # At exit, so runs that stop early (an error, Ctrl+C) still report what they spent.
+        atexit.register(_report_usage)
+    _built.append(deps)
     return deps
 
 
-def _report_usage(deps) -> None:
-    used = [u for u in deps.usage() if u.requests]
+def _usage(built) -> list:
+    """Tokens per model across these Deps."""
+    by_model = {}
+    for deps in built:
+        for u in deps.usage():
+            if u.requests:
+                by_model[u.model] = by_model[u.model] + u if u.model in by_model else u
+    return list(by_model.values())
+
+
+def _report_usage() -> None:
+    used = _usage(_built)
     if not used:
         return
     typer.echo("\nLLM usage:", err=True)
@@ -405,7 +421,7 @@ def eval_traps(
     independent: Annotated[
         bool, typer.Option(help="Calibrate the tailoring eval's independent judge instead")
     ] = False,
-) -> None:
+) -> str:
     """Fabricated rewrites the honesty check must reject, and honest ones it must accept."""
     from vouch.evals.traps import check_all, check_deterministic, check_independent, load_traps
 
@@ -443,12 +459,14 @@ def eval_traps(
         + (f", {len(left)} not checked without it" if free else "")
         + ")"
     )
-    typer.echo(
-        f"\nTraps caught: {len(caught)}/{traps_total}{layers}; "
+    headline = (
+        f"Traps caught: {len(caught)}/{traps_total}{layers}; "
         f"honest rewrites rejected: {len(false_alarms)}/{len(outcomes) - traps_total}"
     )
+    typer.echo(f"\n{headline}")
     if any(not o.correct and o.case.id not in left for o in outcomes):
         raise typer.Exit(1)
+    return headline
 
 
 @eval_app.command("ranking")
@@ -456,7 +474,7 @@ def eval_ranking(
     k: Annotated[int, typer.Option(help="Cut-off for precision@k and NDCG@k")] = 10,
     file: Annotated[Path, typer.Option()] = Path("evals/labels.yaml"),
     save_report: SaveReport = True,
-) -> None:
+) -> str:
     """How well the fit score ranks the jobs you labelled on the /label page (no LLM calls)."""
     from vouch.evals.labels import load_labels
     from vouch.evals.ranking import evaluate, labelled_items
@@ -492,6 +510,10 @@ def eval_ranking(
 
         scope = f"{file.as_posix()}, k={k}"
         _save_report(_deps(), "ranking", scope, ranking_metrics(report), models={})
+    return f"{graded} labelled jobs; " + ", ".join(
+        f"{name} precision@{k} {m['precision']:.2f}, NDCG@{k} {m['ndcg']:.2f}"
+        for name, m in report.metrics.items()
+    )
 
 
 def _save_report(deps, eval: str, scope: str, metrics, models: dict[str, str]) -> None:
@@ -539,7 +561,7 @@ def eval_tailoring(
     judge: Annotated[bool, typer.Option(help="Audit changed text with the judge model")] = True,
     file: Annotated[Path, typer.Option(exists=True)] = Path("evals/tailoring.yaml"),
     save_report: SaveReport = True,
-) -> None:
+) -> str | None:
     """Tailor resumes for the fixed job set and measure coverage, rejected rewrites, keywords
     and (with the independent judge) fabrications that got past the honesty check. About 10-20
     LLM requests per job, plus one judge request; no resume versions are saved."""
@@ -582,23 +604,25 @@ def eval_tailoring(
             f"{name:<46}{pct(s.must_coverage):>6}{pct(s.must_possible):>7}"
             f"{rejected:>10}{s.not_returned:>9}{keywords:>11}{s.pages:>6}{over}"
         )
+    headline = None
     if run.scores:
         gained = sum(s.keywords_after - s.keywords_before for s in run.scores)
         total = sum(s.keywords_total for s in run.scores)
-        typer.echo(
-            f"\n{len(run.scores)} job(s): must-have coverage {pct(run.mean('must_coverage'))} "
+        headline = (
+            f"{len(run.scores)} job(s): must-have coverage {pct(run.mean('must_coverage'))} "
             f"(profile could reach {pct(run.mean('must_possible'))}); "
             f"rewrites rejected {pct(run.rejection_rate)}, "
             f"skipped {sum(s.not_returned for s in run.scores)}; "
             f"keywords +{gained} of {total}; "
             f"over the page limit: {sum(s.pages > s.max_pages for s in run.scores)}"
         )
+        typer.echo(f"\n{headline}")
     if run.audited is not None:
         found = [(s, f) for s in run.scores for f in s.fabrications]
-        typer.echo(
-            f"\nIndependent judge: {len(found)} of {run.audited} changed text(s) "
-            "claim something the source doesn't"
-        )
+        judged = f"{len(found)} of {run.audited} changed text(s) claim something the source doesn't"
+        typer.echo(f"\nIndependent judge: {judged}")
+        if headline:
+            headline += f"; judge: {judged}"
         for s, (item_id, text, claims) in found:
             typer.echo(f"  {s.company} | {s.title} [{item_id}]\n    {text}")
             for c in claims:
@@ -623,6 +647,7 @@ def eval_tailoring(
     if run.stopped:
         typer.echo(f"Stopped early: {run.stopped}", err=True)
         raise typer.Exit(1)
+    return headline
 
 
 @eval_app.command("summaries")
@@ -648,7 +673,7 @@ def eval_summaries(
         bool, typer.Option(help="Print every draft, not only the flagged ones")
     ] = False,
     save_report: SaveReport = True,
-) -> None:
+) -> str | None:
     """How often first-draft summaries claim something the bullets don't back, and how many of
     those the honesty check catches. Several drafts per job, since one run is noise. About 2
     requests per draft plus 2 per job; no resume versions are saved. --saved reports on
@@ -709,17 +734,19 @@ def eval_summaries(
             selections={j.url: j for j in load_drafts(same_bullets)} if same_bullets else None,
         )
     drafts = run.drafts()
+    headline = None
     if drafts:
         bad = [d for d in drafts if d.unsupported]
         rejected = [d for d in drafts if d.rejected]
         escaped = [d for d in drafts if d.escaped]
         clean_rejected = [d for d in rejected if not d.unsupported]
-        typer.echo(
-            f"\n{len(drafts)} draft(s): {len(bad)} claim something the bullets don't back "
+        headline = (
+            f"{len(drafts)} draft(s): {len(bad)} claim something the bullets don't back "
             f"({len(bad) / len(drafts):.0%}); the check caught {len(bad) - len(escaped)} and "
             f"let {len(escaped)} through; it also rejected {len(clean_rejected)} the judge "
             f"found clean"
         )
+        typer.echo(f"\n{headline}")
     # A plain --saved report repeats an earlier run; with --rejudge the judge's verdicts are new.
     if save_report and drafts and not run.stopped and (rejudge or not saved):
         from vouch.evals.reports import summary_metrics
@@ -736,6 +763,60 @@ def eval_summaries(
         typer.echo(f"Not in the database or not analysed: {url}", err=True)
     if run.stopped:
         typer.echo(f"Stopped early: {run.stopped}", err=True)
+        raise typer.Exit(1)
+    return headline
+
+
+@eval_app.command("all")
+def eval_all(
+    full: Annotated[
+        bool, typer.Option(help="Also tailoring and summaries on the fixed job set (about $4)")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="With --full: don't ask before spending")
+    ] = False,
+) -> None:
+    """Every eval in one report; run it before changing prompts or models. By default the quick
+    ones: traps through each layer of the honesty check and the independent judge, and ranking
+    (2 LLM requests, about $0.20). Each eval saves its report and compares with the last."""
+    steps = [
+        ("traps, deterministic", lambda: eval_traps(free=True)),
+        ("traps, honesty check", lambda: eval_traps()),
+        ("traps, independent judge", lambda: eval_traps(independent=True)),
+        ("ranking", lambda: eval_ranking()),
+    ]
+    if full:
+        if not yes:
+            typer.confirm(
+                "--full tailors every job in evals/tailoring.yaml and samples 2 summaries for "
+                "each: about $4 of LLM calls and up to an hour. Go on?",
+                abort=True,
+            )
+        steps += [
+            ("tailoring", lambda: eval_tailoring()),
+            ("summaries", lambda: eval_summaries(samples=2)),
+        ]
+    results = []  # (step, status, headline, cost)
+    for name, step in steps:
+        typer.echo(f"\n=== {name} ===")
+        before = len(_built)
+        try:
+            status, headline = "ok", step() or ""
+        except typer.Exit as e:
+            status, headline = ("ok" if e.exit_code == 0 else "FAIL"), "see its output above"
+        except Exception as e:  # noqa: BLE001 - one broken step shouldn't stop the others
+            status, headline = "error", str(e).splitlines()[0] if str(e) else type(e).__name__
+            typer.echo(f"Error: {headline}", err=True)
+        costs = [u.cost for u in _usage(_built[before:])]
+        cost = sum(costs) if None not in costs else None
+        results.append((name, status, headline, cost))
+
+    typer.echo("\n=== Summary ===")
+    width = max(len(name) for name, *_ in results)
+    for name, status, headline, cost in results:
+        spent = "      " if cost == 0 else "     ?" if cost is None else f"${cost:5.2f}"
+        typer.echo(f"{status:<6}{name:<{width}}  {spent}  {headline}")
+    if any(status != "ok" for _, status, *_ in results):
         raise typer.Exit(1)
 
 

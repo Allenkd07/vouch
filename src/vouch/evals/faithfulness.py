@@ -65,8 +65,11 @@ Judge strictly, but only by the SOURCE: don't reject a claim the SOURCE does sta
 each unsupported claim. Misleading: a recruiter would believe something false about what the
 candidate did, used, led or achieved: a tool, number, scale, result, responsibility or
 seniority the source doesn't back, or a tool tied to work it wasn't recorded for. Minor: a
-general word of praise that adds no checkable fact ("robust", "modern"), or a small wording
-shift a recruiter would read the same way. When unsure, misleading. Return one audit per id,
+general word of praise that adds no checkable fact ("robust", "modern"), a small wording
+shift a recruiter would read the same way, or the general name for the kind of work the
+source describes, with the same tool and no new task ("orchestrated quality checks with
+Airflow" -> "workflow automation with Airflow"; but "ETL pipelines with Airflow" names
+different work, so misleading). When unsure, misleading. Return one audit per id,
 in the given order."""
 
 
